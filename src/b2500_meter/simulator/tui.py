@@ -47,7 +47,6 @@ class SimulatorApp(App):
     #grid-graph {
         height: 12;
         margin: 0 1;
-        can-focus: false;
     }
     .section-title {
         text-style: bold;
@@ -70,13 +69,13 @@ class SimulatorApp(App):
         Binding("7", "toggle_load(7)", "Load 7", show=False),
         Binding("8", "toggle_load(8)", "Load 8", show=False),
         Binding("9", "set_soc(1)", "SOC 100%", show=False),
-        Binding("up", "solar_adjust(100)", "Solar +100W", show=False),
-        Binding("down", "solar_adjust(-100)", "Solar -100W", show=False),
+        Binding("up", "solar_adjust(100)", "Solar +100W", show=False, priority=True),
+        Binding("down", "solar_adjust(-100)", "Solar -100W", show=False, priority=True),
         Binding("s", "solar_max", "Solar Max"),
         Binding("shift+s", "solar_off", "Solar Off"),
         Binding("b", "cycle_battery", "Select Battery"),
-        Binding("left", "adjust_soc(-0.1)", "SOC -10%", show=False),
-        Binding("right", "adjust_soc(0.1)", "SOC +10%", show=False),
+        Binding("left", "adjust_soc(-0.1)", "SOC -10%", show=False, priority=True),
+        Binding("right", "adjust_soc(0.1)", "SOC +10%", show=False, priority=True),
         Binding("0", "set_soc(0)", "SOC 0%", show=False),
         Binding("p", "adjust_max_power(-100)", "Power -100W", show=False),
         Binding("shift+p", "adjust_max_power(100)", "Power +100W", show=False),
@@ -121,6 +120,7 @@ class SimulatorApp(App):
     # -- lifecycle ---------------------------------------------------------
 
     async def on_mount(self) -> None:
+        self.query_one("#grid-graph", PlotWidget).can_focus = False
         if self._runner:
             # In-process mode: start powermeter + batteries as workers
             self.run_worker(self._run_simulation, exclusive=True, group="sim")  # type: ignore[arg-type]
