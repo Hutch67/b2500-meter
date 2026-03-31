@@ -128,6 +128,7 @@ class SimulatorApp(App):
             # Attach mode: connect SSE
             self.run_worker(self._sse_listener, exclusive=True, group="sse")  # type: ignore[arg-type]
         self.set_interval(1.0, self._refresh_display)
+        self._refresh_display()
 
     async def _run_simulation(self) -> None:
         runner = self._runner
@@ -179,6 +180,10 @@ class SimulatorApp(App):
         if not status:
             return
 
+        self.sub_title = (
+            "Auto mode: ON" if status.get("auto_mode") else "Auto mode: OFF"
+        )
+
         # Grid table + graph
         grid = status.get("grid", {})
         grid_text = self._format_grid(grid)
@@ -200,8 +205,7 @@ class SimulatorApp(App):
 
         # Solar
         solar = status.get("solar", {})
-        auto = status.get("auto_mode", False)
-        solar_text = self._format_solar(solar, auto)
+        solar_text = self._format_solar(solar)
         self.query_one("#solar-bar", Static).update(solar_text)
 
     def _format_grid(self, grid: dict) -> str:
@@ -259,7 +263,7 @@ class SimulatorApp(App):
             )
         return "\n".join(lines)
 
-    def _format_solar(self, solar: dict, auto: bool) -> str:
+    def _format_solar(self, solar: dict) -> str:
         current = solar.get("current", 0)
         mx = solar.get("max", 1)
         phases = solar.get("phases", [])
@@ -267,10 +271,9 @@ class SimulatorApp(App):
         bar_len = 20
         filled = int(pct * bar_len)
         bar = "█" * filled + "░" * (bar_len - filled)
-        auto_tag = " [yellow][AUTO][/]" if auto else ""
         return (
             f"\n  Solar: {bar} {current:.0f}W / {mx:.0f}W  "
-            f"(phases {','.join(phases)})  [↑/↓ adjust]{auto_tag}\n\n"
+            f"(phases {','.join(phases)})  [↑/↓ adjust]\n\n"
             f"  [1-9] toggle load  [↑↓] solar  [s/S] solar max/off\n"
             f"  [b] select battery  [←→] SOC ±10%  [0/9] SOC 0%/100%\n"
             f"  [p/P] max power ±100W  [a] auto mode  [q] quit"
@@ -374,6 +377,7 @@ class SimulatorApp(App):
         elif self._daemon_port:
             current = self._status.get("auto_mode", False)
             self._post("/auto", {"enabled": not current})
+        self._refresh_display()
 
     async def action_quit(self) -> None:
         if self._runner:
