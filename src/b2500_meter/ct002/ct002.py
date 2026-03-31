@@ -1,7 +1,9 @@
-import inspect
-import socket
-import threading
+from __future__ import annotations
+
+import asyncio
+import contextlib
 import time
+from collections.abc import Awaitable, Callable
 
 from b2500_meter.config.logger import logger
 
@@ -119,6 +121,22 @@ def parse_request(data):
     return fields, None
 
 
+class _CT002Protocol(asyncio.DatagramProtocol):
+    def __init__(self, ct002: CT002):
+        self.ct002 = ct002
+        self._tasks: set[asyncio.Task] = set()
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data, addr):
+        task = asyncio.create_task(
+            self.ct002._safe_handle_request(data, addr, self.transport)
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+
 class CT002:
     def __init__(
         self,
@@ -167,18 +185,21 @@ class CT002:
         self.saturation_detection = saturation_detection
         self.saturation_alpha = max(0.01, min(1.0, saturation_alpha))
         self.min_target_for_saturation = max(1, min_target_for_saturation)
-        self.before_send = None
+        self.before_send: (
+            Callable[[tuple, list, str], Awaitable[list[float] | None]] | None
+        ) = None
         self._info_idx_counter = 0
-        self._stop = False
-        self._udp_thread = None
         self._values_by_consumer = {}
         self._reports_by_consumer = {}
         self._last_target_by_consumer = {}
         self._saturation_by_consumer = {}
-        self._values_lock = threading.Lock()
-        self._last_response_time = {}
+        self._last_response_time: dict[tuple, float] = {}
         self._smoothed_target = None
         self._last_smooth_sample = None
+        self._transport = None
+        self._protocol: _CT002Protocol | None = None
+        self._cleanup_task = None
+        self._stopped = asyncio.Event()
 
     def _consumer_key(self, addr, fields):
         battery_mac = fields[1] if len(fields) > 1 else ""
@@ -187,24 +208,20 @@ class CT002:
         return f"{addr[0]}:{addr[1]}"
 
     def set_consumer_value(self, consumer_id, values):
-        with self._values_lock:
-            self._values_by_consumer[consumer_id] = values
+        self._values_by_consumer[consumer_id] = values
 
     def _get_consumer_value(self, consumer_id):
-        with self._values_lock:
-            return self._values_by_consumer.get(consumer_id)
+        return self._values_by_consumer.get(consumer_id)
 
     def _update_consumer_report(self, consumer_id, phase, power):
         normalized_phase = str(phase).upper() if phase else "A"
-        previous_phase = None
-        with self._values_lock:
-            previous = self._reports_by_consumer.get(consumer_id, {})
-            previous_phase = previous.get("phase")
-            self._reports_by_consumer[consumer_id] = {
-                "phase": normalized_phase,
-                "power": parse_int(power, 0),
-                "timestamp": time.time(),
-            }
+        previous = self._reports_by_consumer.get(consumer_id, {})
+        previous_phase = previous.get("phase")
+        self._reports_by_consumer[consumer_id] = {
+            "phase": normalized_phase,
+            "power": parse_int(power, 0),
+            "timestamp": time.time(),
+        }
 
         if normalized_phase in ("A", "B", "C") and previous_phase != normalized_phase:
             if previous_phase in ("A", "B", "C"):
@@ -223,17 +240,16 @@ class CT002:
 
     def _cleanup_consumers(self):
         now = time.time()
-        with self._values_lock:
-            stale = [
-                key
-                for key, report in self._reports_by_consumer.items()
-                if now - report.get("timestamp", 0) > self.consumer_ttl
-            ]
-            for key in stale:
-                self._reports_by_consumer.pop(key, None)
-                self._values_by_consumer.pop(key, None)
-                self._last_target_by_consumer.pop(key, None)
-                self._saturation_by_consumer.pop(key, None)
+        stale = [
+            key
+            for key, report in self._reports_by_consumer.items()
+            if now - report.get("timestamp", 0) > self.consumer_ttl
+        ]
+        for key in stale:
+            self._reports_by_consumer.pop(key, None)
+            self._values_by_consumer.pop(key, None)
+            self._last_target_by_consumer.pop(key, None)
+            self._saturation_by_consumer.pop(key, None)
         stale_addrs = [
             addr
             for addr, ts in self._last_response_time.items()
@@ -257,11 +273,10 @@ class CT002:
         follow_ratio = min(1.0, abs(actual) / target_abs)
         inst_saturation = 1.0 - follow_ratio
         alpha = self.saturation_alpha
-        with self._values_lock:
-            prev = self._saturation_by_consumer.get(consumer_id, 0.0)
-            self._saturation_by_consumer[consumer_id] = (
-                alpha * inst_saturation + (1 - alpha) * prev
-            )
+        prev = self._saturation_by_consumer.get(consumer_id, 0.0)
+        self._saturation_by_consumer[consumer_id] = (
+            alpha * inst_saturation + (1 - alpha) * prev
+        )
 
     def _compute_smooth_target(self, values, consumer_id=None):
         """
@@ -286,15 +301,8 @@ class CT002:
         elif sample_id != self._last_smooth_sample:
             self._last_smooth_sample = sample_id
             if self.deadband > 0 and abs(raw_total) < self.deadband:
-                # Within deadband: decay toward zero to avoid locking in
-                # stale targets (the battery's integral controller would
-                # otherwise keep integrating a non-zero smoothed value
-                # even though the grid is balanced).
                 delta = -alpha * self._smoothed_target
             else:
-                # When meter and smoothed cross zero, catch up faster to
-                # avoid sending wrong-sign target (e.g. 0 when we need
-                # discharge)
                 catchup_alpha = alpha
                 if (raw_total > 0) != (self._smoothed_target > 0):
                     catchup_alpha = min(0.5, alpha * 4)
@@ -305,15 +313,16 @@ class CT002:
                     min(self.max_smooth_step, delta),
                 )
             self._smoothed_target += delta
-        with self._values_lock:
-            reports = dict(self._reports_by_consumer)
-            last_target = self._last_target_by_consumer.get(consumer_id)
-            saturation = dict(self._saturation_by_consumer)
+
+        reports = dict(self._reports_by_consumer)
+        last_target = self._last_target_by_consumer.get(consumer_id)
+
         if consumer_id and consumer_id in reports:
             actual_self = parse_int(reports.get(consumer_id, {}).get("power", 0))
             self._update_saturation(consumer_id, last_target, actual_self)
-        with self._values_lock:
-            saturation = dict(self._saturation_by_consumer)
+
+        # Snapshot after _update_saturation may have modified the dict.
+        saturation = dict(self._saturation_by_consumer)
         num_consumers = max(1, len(reports))
         eff_part = {cid: max(0.01, 1.0 - saturation.get(cid, 0.0)) for cid in reports}
         total_effective = sum(eff_part.values())
@@ -374,9 +383,9 @@ class CT002:
         # charge during import, worsening overshoot)
         if (raw_total < 0 and target > 0) or (raw_total > 0 and target < 0):
             target = 0
-        with self._values_lock:
-            if consumer_id:
-                self._last_target_by_consumer[consumer_id] = target
+
+        if consumer_id:
+            self._last_target_by_consumer[consumer_id] = target
 
         # Distribute target across phases according to active consumer phase mapping.
         phase_effective = {"A": 0.0, "B": 0.0, "C": 0.0}
@@ -402,8 +411,7 @@ class CT002:
             "B": {"chrg_power": 0, "dchrg_power": 0, "active": False},
             "C": {"chrg_power": 0, "dchrg_power": 0, "active": False},
         }
-        with self._values_lock:
-            reports = list(self._reports_by_consumer.items())
+        reports = list(self._reports_by_consumer.items())
 
         for _consumer_id, report in reports:
             phase = (report.get("phase") or "A").upper()
@@ -433,8 +441,7 @@ class CT002:
         phases = " ".join(f"{p}:{int(v)}W" for p, v in zip("ABC", values, strict=False))
         chrg = " ".join(f"{p}:{phase_values[p]['chrg_power']}" for p in "ABC")
         dchrg = " ".join(f"{p}:{phase_values[p]['dchrg_power']}" for p in "ABC")
-        with self._values_lock:
-            reports = list(self._reports_by_consumer.items())
+        reports = list(self._reports_by_consumer.items())
         consumers = (
             " ".join(
                 f"{cid[:8]}@{r.get('phase', '?')}:{r.get('power', 0)}"
@@ -492,10 +499,6 @@ class CT002:
             "0",  # x/A/B/C/ABC_dchrg_power
         ]
 
-        # Forward A/B/C values across all known consumers, but split per-storage
-        # by sign before aggregation:
-        # negative reports contribute to *_chrg_power,
-        # positive reports contribute to *_dchrg_power.
         phase_values = self._collect_reports_by_phase()
         for phase, idx in (("A", 0), ("B", 1), ("C", 2)):
             if phase_values[phase]["active"]:
@@ -507,20 +510,16 @@ class CT002:
         self._info_idx_counter = (self._info_idx_counter + 1) % 256
         return response_fields
 
-    def _call_before_send(self, addr, fields, consumer_id):
+    async def _call_before_send(self, addr, fields, consumer_id):
         if not self.before_send:
             return None
         try:
-            params = inspect.signature(self.before_send).parameters
-            if len(params) >= 3:
-                return self.before_send(addr, fields, consumer_id)
-            return self.before_send(addr)
+            return await self.before_send(addr, fields, consumer_id)
         except Exception as exc:
             logger.warning("before_send failed for %s: %s", addr, exc)
             return None
 
     def _validate_ct_mac(self, request_fields):
-        # If CT_MAC is not configured, accept all request CT MACs.
         if not self.ct_mac:
             return True
         if len(request_fields) < 4:
@@ -530,15 +529,21 @@ class CT002:
             return False
         return req_ct_mac.lower() == self.ct_mac.lower()
 
-    def _handle_request(self, data, addr):
+    async def _safe_handle_request(self, data, addr, transport):
+        try:
+            await self._handle_request(data, addr, transport)
+        except Exception:
+            logger.exception("Error handling CT002 request from %s", addr)
+
+    async def _handle_request(self, data, addr, transport):
         logger.debug("CT002 request from %s: %s", addr, data.hex())
         fields, error = parse_request(data)
         if error:
             logger.debug("Invalid CT002 request from %s: %s", addr, error)
-            return None
+            return
         if len(fields) < 4:
             logger.debug("CT002 request from %s missing required fields", addr)
-            return None
+            return
         if not self._validate_ct_mac(fields):
             logger.debug(
                 "Ignoring CT002 request from %s due to CT MAC mismatch (req=%s, cfg=%s)",
@@ -546,16 +551,18 @@ class CT002:
                 fields[3] if len(fields) > 3 else None,
                 self.ct_mac,
             )
-            return None
+            return
         consumer_id = self._consumer_key(addr, fields)
         reported_phase = (fields[4] if len(fields) > 4 else "").strip().upper()
         reported_power = parse_int(fields[5] if len(fields) > 5 else 0)
 
         if reported_phase not in ("A", "B", "C", "0", ""):
             logger.debug(
-                "CT002 request from %s has invalid phase '%s'", addr, reported_phase
+                "CT002 request from %s has invalid phase '%s'",
+                addr,
+                reported_phase,
             )
-            return None
+            return
 
         in_inspection_mode = reported_phase in ("0", "")
 
@@ -571,12 +578,22 @@ class CT002:
             consumer_id,
             " in inspection mode" if in_inspection_mode else "",
         )
+
+        # Deduplication check — stamp immediately (before any await) so a
+        # second rapid packet from the same addr sees the updated time.
+        current_time = time.time()
+        last_time = self._last_response_time.get(addr)
+        if last_time and (current_time - last_time) < self.dedupe_time_window:
+            logger.debug("Ignoring request from %s due to dedupe window", addr)
+            return
+        self._last_response_time[addr] = current_time
+
         if not in_inspection_mode:
             self._update_consumer_report(
                 consumer_id, phase=reported_phase, power=reported_power
             )
 
-        updated = self._call_before_send(addr, fields, consumer_id)
+        updated = await self._call_before_send(addr, fields, consumer_id)
         if updated is not None:
             self.set_consumer_value(consumer_id, updated)
 
@@ -591,9 +608,12 @@ class CT002:
             response = build_payload(response_fields)
         except Exception as exc:
             logger.warning(
-                "Failed to build CT002 response for %s (%s): %s", addr, fields, exc
+                "Failed to build CT002 response for %s (%s): %s",
+                addr,
+                fields,
+                exc,
             )
-            return None
+            return
         logger.debug(
             "CT002 response to %s: %s (fields=%s)",
             addr,
@@ -606,63 +626,45 @@ class CT002:
                 "CT002 status: %s",
                 self._format_status(values, phase_values, consumer_id, meter_value),
             )
-        return response
+        transport.sendto(response, addr)
 
-    def udp_server(self):
-        udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        udp_sock.bind(("", self.udp_port))
-        udp_sock.settimeout(1.0)
-        logger.info("CT002 UDP server listening on port %s", self.udp_port)
-        last_cleanup = time.time()
+    async def _cleanup_loop(self):
         try:
-            while not self._stop:
-                now = time.time()
-                if now - last_cleanup >= CLEANUP_INTERVAL_SECONDS:
-                    self._cleanup_consumers()
-                    last_cleanup = now
-                try:
-                    data, addr = udp_sock.recvfrom(1024)
-                except TimeoutError:
-                    continue
-                current_time = time.time()
-                last_time = self._last_response_time.get(addr)
-                if last_time and (current_time - last_time) < self.dedupe_time_window:
-                    logger.debug("Ignoring request from %s due to dedupe window", addr)
-                    continue
-                response = self._handle_request(data, addr)
-                if response:
-                    for attempt in range(3):
-                        try:
-                            udp_sock.sendto(response, addr)
-                            self._last_response_time[addr] = current_time
-                            break
-                        except OSError as e:
-                            if attempt < 2:
-                                time.sleep(0.05 * (attempt + 1))
-                            else:
-                                logger.info(
-                                    "Could not send response to %s after %d attempts: %s",
-                                    addr,
-                                    attempt + 1,
-                                    e,
-                                )
-        finally:
-            udp_sock.close()
+            while True:
+                await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+                self._cleanup_consumers()
+        except asyncio.CancelledError:
+            pass
 
-    def start(self):
-        if self._udp_thread and self._udp_thread.is_alive():
-            return
-        self._stop = False
-        self._udp_thread = threading.Thread(target=self.udp_server)
-        self._udp_thread.start()
+    async def start(self):
+        loop = asyncio.get_running_loop()
+        transport, protocol = await loop.create_datagram_endpoint(
+            lambda: _CT002Protocol(self),
+            local_addr=("0.0.0.0", self.udp_port),
+        )
+        self._transport = transport
+        self._protocol = protocol
+        self._stopped.clear()
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+        logger.info("CT002 UDP server listening on port %s", self.udp_port)
 
-    def join(self):
-        if self._udp_thread:
-            self._udp_thread.join()
+    async def wait(self):
+        await self._stopped.wait()
 
-    def stop(self):
-        self._stop = True
-        if self._udp_thread:
-            self._udp_thread.join()
-        self._udp_thread = None
+    async def stop(self):
+        if self._cleanup_task:
+            self._cleanup_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._cleanup_task
+            self._cleanup_task = None
+        # Close transport first to stop new datagrams from spawning tasks,
+        # then cancel and await any in-flight handler tasks.
+        if self._transport:
+            self._transport.close()
+            self._transport = None
+        if self._protocol:
+            for task in list(self._protocol._tasks):
+                task.cancel()
+            await asyncio.gather(*self._protocol._tasks, return_exceptions=True)
+        self._protocol = None
+        self._stopped.set()
