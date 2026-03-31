@@ -62,7 +62,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         validate_config,
     )
 
-    _setup_logging(verbose=args.verbose)
+    _setup_logging(verbose=args.verbose, tui=not args.no_tui)
 
     if args.config:
         data = json.loads(Path(args.config).read_text())
@@ -284,12 +284,24 @@ def _attach_tui(port: int) -> None:
 # -- logging ---------------------------------------------------------------
 
 
-def _setup_logging(verbose: bool = False) -> None:
-    level = logging.DEBUG if verbose else logging.INFO
+def _setup_logging(verbose: bool = False, *, tui: bool = False) -> None:
+    """Configure root logging.
+
+    In TUI mode, default level is WARNING so INFO lines (HTTP listen, battery
+    startup, etc.) do not corrupt the terminal. Use ``--verbose`` for DEBUG.
+    Headless mode uses INFO unless ``--verbose`` (then DEBUG).
+    """
+    if verbose:
+        level = logging.DEBUG
+    elif tui:
+        level = logging.WARNING
+    else:
+        level = logging.INFO
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
         datefmt="%H:%M:%S",
+        force=True,
     )
 
 
