@@ -1,6 +1,7 @@
 # Changelog
 
 ## Next
+- Added 3-phase support for Tasmota powermeter: comma-separated `JSON_POWER_MQTT_LABEL` / input / output labels ([#136](https://github.com/tomquist/b2500-meter/issues/136))
 - Added multi-phase support for MQTT powermeter: multiple topics (`TOPICS`) or multiple JSON paths (`JSON_PATHS`) from a single topic ([#208](https://github.com/tomquist/b2500-meter/issues/208), [#280](https://github.com/tomquist/b2500-meter/pull/280))
 - Added support for emulating a *CT002/CT003*, which is recommended to steer multiple devices
 - Added HomeWizard P1 powermeter support via the device WebSocket API with token and serial configuration ([#231](https://github.com/tomquist/b2500-meter/pull/231)), including optional `VERIFY_SSL` to disable TLS certificate verification on trusted networks when needed ([#254](https://github.com/tomquist/b2500-meter/pull/254))
