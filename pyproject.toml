@@ -17,7 +17,7 @@ dependencies = [
     "jsonpath-ng",
     "pymodbus==3.6.5",
     "smllib",
-    "pyserial",
+    "pyserial-asyncio-fast",
 ]
 
 [project.optional-dependencies]
