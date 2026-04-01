@@ -16,7 +16,6 @@ dependencies = [
     "aiomqtt>=2.0.0,<3",
     "jsonpath-ng",
     "pymodbus==3.6.5",
-    "websocket-client==1.8.0",
     "smllib",
     "pyserial",
 ]
