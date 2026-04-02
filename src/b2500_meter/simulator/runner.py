@@ -44,6 +44,7 @@ class SimulationConfig:
     auto_mode: bool = False
     auto_interval: tuple[float, float] = (10.0, 30.0)
     log_interval: float = 5.0
+    time_scale: float = 1.0
 
 
 class SimulationRunner:
@@ -89,6 +90,7 @@ class SimulationRunner:
                 initial_soc=bc.initial_soc,
                 ramp_rate=bc.ramp_rate,
                 poll_interval=bc.poll_interval,
+                time_scale=cfg.time_scale,
             )
             for bc in cfg.batteries
         ]
@@ -114,8 +116,9 @@ class SimulationRunner:
             await self.powermeter.stop()
 
     async def _log_loop(self) -> None:
+        ts = max(self.config.time_scale, 0.1)
         while True:
-            await asyncio.sleep(self.config.log_interval)
+            await asyncio.sleep(self.config.log_interval / ts)
             grid = self.powermeter.compute_grid()
             parts = [
                 f"grid=[{grid['phase_a']:.0f}, {grid['phase_b']:.0f}, {grid['phase_c']:.0f}]"
@@ -127,9 +130,10 @@ class SimulationRunner:
             logger.info(" | ".join(parts))
 
     async def _auto_loop(self) -> None:
+        ts = max(self.config.time_scale, 0.1)
         while True:
             lo, hi = self.load_model.auto_interval
-            await asyncio.sleep(random.uniform(lo, hi))
+            await asyncio.sleep(random.uniform(lo, hi) / ts)
             if self.load_model.auto_mode:
                 self.load_model.auto_step()
 
@@ -183,6 +187,7 @@ def parse_config(data: dict) -> SimulationConfig:
         auto_mode=data.get("auto_mode", False),
         auto_interval=tuple(auto_interval_raw),
         log_interval=data.get("log_interval", 5.0),
+        time_scale=data.get("time_scale", 1.0),
     )
 
 
@@ -212,6 +217,9 @@ def validate_config(cfg: SimulationConfig) -> None:
     for phase in cfg.solar_phases:
         if phase not in ("A", "B", "C"):
             raise ValueError(f"Invalid solar phase {phase!r}")
+
+    if cfg.time_scale <= 0:
+        raise ValueError(f"time_scale must be positive, got {cfg.time_scale}")
 
 
 def quick_config(

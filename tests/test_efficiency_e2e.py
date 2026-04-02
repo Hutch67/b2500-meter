@@ -5,6 +5,8 @@ and verify that the efficiency optimization correctly concentrates power on fewe
 batteries at low demand and distributes to all at high demand.
 """
 
+from __future__ import annotations
+
 import asyncio
 
 import pytest
@@ -20,13 +22,14 @@ BASE_HTTP_PORT = 18080
 
 
 def _find_free_ports(n: int = 2) -> list[int]:
-    """Return *n* free UDP port numbers."""
+    """Return *n* free port numbers (first UDP, rest TCP)."""
     import socket
 
+    types = [socket.SOCK_DGRAM] + [socket.SOCK_STREAM] * (n - 1)
     ports: list[int] = []
     socks: list[socket.socket] = []
-    for _ in range(n):
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    for i in range(n):
+        s = socket.socket(socket.AF_INET, types[i])
         s.bind(("127.0.0.1", 0))
         ports.append(s.getsockname()[1])
         socks.append(s)
@@ -375,6 +378,91 @@ class TestEfficiencyE2E:
             await h.settle(3.0)
             assert h.active_battery_count(threshold=30.0) == 2, (
                 f"High demand: expected 2 active. Powers: {h.battery_powers()}"
+            )
+        finally:
+            await h.stop()
+
+    @pytest.mark.timeout(45)
+    async def test_saturated_battery_triggers_rotation(self):
+        """When the active battery is saturated, it gets swapped out quickly."""
+        h = _SimHarness(
+            num_batteries=2,
+            base_load=[200.0, 0.0, 0.0],
+            min_efficient_power=150,
+            efficiency_fade_alpha=1.0,
+            efficiency_saturation_threshold=0.4,
+        )
+        await h.start()
+        try:
+            # Let system settle with both batteries available
+            await h.settle(5.0)
+            assert h.active_battery_count() == 1, (
+                f"Expected 1 active battery. Powers: {h.battery_powers()}"
+            )
+            # Identify which battery is active and saturate it
+            powers = h.battery_powers()
+            active_idx = 0 if abs(powers[0]) > abs(powers[1]) else 1
+            other_idx = 1 - active_idx
+            h.batteries[active_idx].max_charge_power = 0
+            h.batteries[active_idx].max_discharge_power = 0
+            # Poll for saturation detection + forced swap + ramp-up
+            for _ in range(40):
+                await asyncio.sleep(0.5)
+                if abs(h.battery_powers()[other_idx]) > 50:
+                    break
+            assert abs(h.battery_powers()[other_idx]) > 50, (
+                f"Expected other battery to take over. Powers: {h.battery_powers()}"
+            )
+        finally:
+            await h.stop()
+
+    @pytest.mark.timeout(60)
+    async def test_saturation_recovery_after_swap(self):
+        """After forced swap, original battery recovers when constraint is lifted."""
+        h = _SimHarness(
+            num_batteries=2,
+            base_load=[200.0, 0.0, 0.0],
+            min_efficient_power=150,
+            efficiency_fade_alpha=1.0,
+            efficiency_rotation_interval=10,
+            efficiency_saturation_threshold=0.4,
+            saturation_decay_factor=0.8,
+        )
+        await h.start()
+        try:
+            await h.settle(5.0)
+            # Saturate the active battery
+            powers = h.battery_powers()
+            active_idx = 0 if abs(powers[0]) > abs(powers[1]) else 1
+            h.batteries[active_idx].max_charge_power = 0
+            h.batteries[active_idx].max_discharge_power = 0
+            # Poll for swap — the other battery should take over
+            other_idx = 1 - active_idx
+            for _ in range(40):
+                await asyncio.sleep(0.5)
+                if abs(h.battery_powers()[other_idx]) > 50:
+                    break
+            assert abs(h.battery_powers()[other_idx]) > 50, (
+                f"Expected other battery to take over. Powers: {h.battery_powers()}"
+            )
+            # Restore the original battery
+            h.batteries[active_idx].max_charge_power = 800
+            h.batteries[active_idx].max_discharge_power = 800
+            # Poll for the restored battery to become active again
+            for _ in range(40):
+                await asyncio.sleep(0.5)
+                if abs(h.battery_powers()[active_idx]) > 50:
+                    break
+            assert abs(h.battery_powers()[active_idx]) > 50, (
+                f"Restored battery should be producing. Powers: {h.battery_powers()}"
+            )
+            # Poll for grid to settle after restored battery ramps up
+            for _ in range(20):
+                await asyncio.sleep(0.5)
+                if abs(h.grid_total()) < 60:
+                    break
+            assert abs(h.grid_total()) < 60, (
+                f"Grid should be near zero after recovery. Grid: {h.grid_total():.0f}W"
             )
         finally:
             await h.stop()
