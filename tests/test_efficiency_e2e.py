@@ -243,9 +243,17 @@ class TestEfficiencyE2E:
         )
         await h.start()
         try:
-            await h.settle(8.0)
-
+            # Initial battery polls are jittered, so the disabled-feature path
+            # can occasionally still be converging at the 8s mark in CI.
+            timeout = 15.0
+            poll_interval = 0.5
+            elapsed = 0.0
             active = h.active_battery_count(threshold=15.0)
+            while elapsed < timeout and active != 2:
+                await asyncio.sleep(poll_interval)
+                elapsed += poll_interval
+                active = h.active_battery_count(threshold=15.0)
+
             assert active == 2, (
                 f"With feature disabled, expected 2 active at 200W. "
                 f"Powers: {h.battery_powers()}"
