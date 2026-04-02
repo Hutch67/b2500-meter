@@ -164,7 +164,8 @@ class CT002:
         saturation_alpha=0.15,
         min_target_for_saturation=20,
         min_efficient_power=0,
-        efficiency_rotation_interval=300,
+        efficiency_rotation_interval=900,
+        efficiency_fade_alpha=0.15,
     ):
         self.udp_port = udp_port
         self.ct_mac = ct_mac
@@ -190,6 +191,7 @@ class CT002:
         self.min_target_for_saturation = max(1, min_target_for_saturation)
         self.min_efficient_power = max(0, min_efficient_power)
         self.efficiency_rotation_interval = max(10, efficiency_rotation_interval)
+        self.efficiency_fade_alpha = max(0.01, min(1.0, efficiency_fade_alpha))
         self.before_send: (
             Callable[[tuple, list, str], Awaitable[list[float] | None]] | None
         ) = None
@@ -206,6 +208,7 @@ class CT002:
         self._efficiency_last_rotation: float = time.time()
         self._efficiency_cache_sample: tuple | None = None
         self._efficiency_cache_result: dict[str, float] | None = None
+        self._efficiency_fade_weights: dict[str, float] = {}
         self._transport = None
         self._protocol: _CT002Protocol | None = None
         self._cleanup_task = None
@@ -262,6 +265,7 @@ class CT002:
             self._last_target_by_consumer.pop(key, None)
             self._saturation_by_consumer.pop(key, None)
             self._efficiency_deprioritized.discard(key)
+            self._efficiency_fade_weights.pop(key, None)
             if key in self._efficiency_priority:
                 self._efficiency_priority.remove(key)
                 # Invalidate cache so next call rebuilds with updated topology
@@ -401,6 +405,34 @@ class CT002:
         self._efficiency_cache_result = result
         return result
 
+    def _fade_efficiency_weights(
+        self, raw_adjustments: dict[str, float], consumer_ids: set[str]
+    ) -> dict[str, float]:
+        """Apply EMA fade to efficiency weights for smooth transitions.
+
+        Returns a dict of {consumer_id: faded_weight} for consumers whose
+        faded weight is below 1.0.  Consumers not in the dict are fully
+        active (weight 1.0).
+        """
+        alpha = self.efficiency_fade_alpha
+        result: dict[str, float] = {}
+        for cid in consumer_ids:
+            goal = raw_adjustments.get(cid, 1.0)
+            prev = self._efficiency_fade_weights.get(cid, 1.0)
+            new = prev + alpha * (goal - prev)
+            if abs(new - goal) < 0.05:
+                new = goal
+            self._efficiency_fade_weights[cid] = new
+            if new < 1.0:
+                result[cid] = new
+        # Prune consumers no longer tracked.
+        self._efficiency_fade_weights = {
+            cid: w
+            for cid, w in self._efficiency_fade_weights.items()
+            if cid in consumer_ids
+        }
+        return result
+
     def _compute_smooth_target(self, values, consumer_id=None):
         """
         Active control: smooth the raw grid reading and split target across consumers.
@@ -452,17 +484,72 @@ class CT002:
         efficiency_adjustments = self._compute_efficiency_deprioritized(
             reports, sample_id
         )
-        for cid, weight in efficiency_adjustments.items():
-            if cid in eff_part:
-                eff_part[cid] = weight
-        # Early return for deprioritized consumers: the battery uses integral
-        # control (target = current_power + grid_reading), so sending [0,0,0]
-        # means "stay at current power".  Instead, send the negative of the
-        # battery's reported power to drive it toward zero.
+        # Smooth fade: advance per-consumer EMA toward target weights.
+        faded_adjustments = self._fade_efficiency_weights(
+            efficiency_adjustments, set(reports.keys())
+        )
+        # During an active fade transition, bypass the normal fair-share
+        # path and compute each consumer's target as a direct absolute-
+        # power allocation.  This keeps the sum of all consumers tracking
+        # demand throughout the transition.
+        #
+        # demand = total_battery_output + grid_residual
+        # desired_power[i] = demand * fade_w[i] / sum(fade_w)
+        # target_delta[i]  = desired_power[i] - reported_power[i]
+        any_fading = any(0.0 < w < 1.0 for w in faded_adjustments.values())
+
+        if any_fading and consumer_id:
+            fade_w = self._efficiency_fade_weights.get(consumer_id, 1.0)
+            reported = parse_int(reports.get(consumer_id, {}).get("power", 0))
+            if fade_w == 0.0:
+                # Fully deprioritized: drive to zero.
+                if consumer_id:
+                    self._last_target_by_consumer[consumer_id] = 0
+                if reported == 0:
+                    return [0, 0, 0]
+                phase = (reports.get(consumer_id, {}).get("phase") or "A").upper()
+                result = [0.0, 0.0, 0.0]
+                result[{"A": 0, "B": 1, "C": 2}.get(phase, 0)] = float(-reported)
+                return result
+
+            total_battery = sum(
+                parse_int(reports.get(cid, {}).get("power", 0)) for cid in reports
+            )
+            demand = total_battery + (self._smoothed_target or 0)
+            total_fade = sum(
+                self._efficiency_fade_weights.get(cid, 1.0) for cid in reports
+            )
+            desired = demand * fade_w / total_fade if total_fade > 0 else 0.0
+            target = desired - reported
+
+            if consumer_id:
+                self._last_target_by_consumer[consumer_id] = target
+
+            phase = (reports.get(consumer_id, {}).get("phase") or "A").upper()
+            phase_effective = {"A": 0.0, "B": 0.0, "C": 0.0}
+            for cid, report in reports.items():
+                p = (report.get("phase") or "A").upper()
+                if p not in phase_effective:
+                    p = "A"
+                phase_effective[p] += eff_part.get(cid, 1.0)
+            total_phase_effective = sum(phase_effective.values())
+            if total_phase_effective <= 0:
+                return [target, 0, 0]
+            return [
+                target * (phase_effective["A"] / total_phase_effective),
+                target * (phase_effective["B"] / total_phase_effective),
+                target * (phase_effective["C"] / total_phase_effective),
+            ]
+
+        # Non-fading path: fully converged deprioritizations and normal
+        # fair-share distribution.
+        for cid, fade_w in faded_adjustments.items():
+            if cid in eff_part and fade_w == 0.0:
+                eff_part[cid] = 0.0
         if (
-            efficiency_adjustments
+            faded_adjustments
             and consumer_id
-            and efficiency_adjustments.get(consumer_id) == 0.0
+            and faded_adjustments.get(consumer_id) == 0.0
         ):
             reported = parse_int(reports.get(consumer_id, {}).get("power", 0))
             if consumer_id:
