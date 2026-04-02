@@ -302,17 +302,9 @@ class CT002:
                 else:
                     self._saturation_by_consumer[consumer_id] = decayed
             return
-        if (last_target > 0 and actual < 0) or (last_target < 0 and actual > 0):
-            inst_saturation = 1.0
-            alpha = self.saturation_alpha
-            prev = self._saturation_by_consumer.get(consumer_id, 0.0)
-            self._saturation_by_consumer[consumer_id] = (
-                alpha * inst_saturation + (1 - alpha) * prev
-            )
-            return
         # True saturation: battery outputs ~0 when asked for significant power
-        # (e.g. SoC at limit).  A battery producing meaningful output but less
-        # than the target is ramping or chasing a moving load — not saturated.
+        # (e.g. SoC at limit). A battery producing meaningful output in either
+        # direction is ramping or chasing a moving load, not saturated.
         inst_saturation = 1.0 if abs(actual) < self.min_target_for_saturation else 0.0
         alpha = self.saturation_alpha
         prev = self._saturation_by_consumer.get(consumer_id, 0.0)
