@@ -38,6 +38,7 @@ def build_ct002_consumer_discovery(
     device_id: str,
     consumer_id: str,
     ha_prefix: str,
+    device_type: str = "",
 ) -> tuple[str, dict]:
     safe_dev = _sanitize_id(device_id)
     safe_cid = _sanitize_id(consumer_id)
@@ -84,9 +85,20 @@ def build_ct002_consumer_discovery(
         "value_template": "{{ (value_json.saturation * 100) | round(1) }}",
     }
 
+    # Phase sensor (enum)
+    components["phase"] = {
+        "platform": "sensor",
+        "unique_id": f"{uid_prefix}_phase",
+        "name": "Phase",
+        "device_class": "enum",
+        "options": ["A", "B", "C"],
+        "state_topic": state_topic,
+        "value_template": "{{ value_json.phase }}",
+        "entity_category": "diagnostic",
+    }
+
     # Diagnostic sensors
     for key, label, tmpl in [
-        ("phase", "Phase", "{{ value_json.phase }}"),
         ("device_type", "Device Type", "{{ value_json.device_type }}"),
         ("battery_ip", "Battery IP", "{{ value_json.battery_ip }}"),
         ("ct_type", "CT Type", "{{ value_json.ct_type }}"),
@@ -113,6 +125,38 @@ def build_ct002_consumer_discovery(
         "entity_category": "diagnostic",
     }
 
+    # Manual target number
+    components["manual_target"] = {
+        "platform": "number",
+        "unique_id": f"{uid_prefix}_manual_target",
+        "name": "Manual Target",
+        "unit_of_measurement": "W",
+        "device_class": "power",
+        "min": -10000,
+        "max": 10000,
+        "mode": "box",
+        "state_topic": state_topic,
+        "value_template": "{{ value_json.manual_target | default(0) }}",
+        "command_topic": f"{state_topic}/set",
+        "command_template": '{"manual_target": {{ value }}}',
+        "entity_category": "config",
+    }
+
+    # Auto target switch (on = automatic control, off = manual override)
+    components["auto_target"] = {
+        "platform": "switch",
+        "unique_id": f"{uid_prefix}_auto_target",
+        "name": "Auto Target",
+        "state_topic": state_topic,
+        "command_topic": f"{state_topic}/set",
+        "value_template": "{{ value_json.auto_target }}",
+        "payload_on": '{"auto_target": true}',
+        "payload_off": '{"auto_target": false}',
+        "state_on": "True",
+        "state_off": "False",
+        "entity_category": "config",
+    }
+
     # Active switch
     components["active"] = {
         "platform": "switch",
@@ -128,12 +172,22 @@ def build_ct002_consumer_discovery(
         "optimistic": True,
     }
 
+    # Build identifiers: include hame_energy_<mac> for matching real devices
+    mac_slug = _sanitize_id(consumer_id).lower().replace("-", "").replace("_", "")
+    identifiers = [node_id, f"hame_energy_{mac_slug}"]
+
+    device_info: dict = {
+        "identifiers": identifiers,
+        "name": f"HAME Energy {device_type} {mac_slug}"
+        if device_type
+        else f"HAME Energy {mac_slug}",
+        "manufacturer": "HAME Energy",
+    }
+    if device_type:
+        device_info["model_id"] = device_type
+
     payload = {
-        "device": {
-            "identifiers": node_id,
-            "name": f"CT002 {consumer_id}",
-            "manufacturer": "b2500-meter",
-        },
+        "device": device_info,
         "origin": _origin(),
         "components": components,
         "availability_mode": "all",
@@ -192,6 +246,14 @@ def build_ct002_device_discovery(
             "state_topic": state_topic,
             "value_template": "{{ value_json.consumer_count }}",
             "entity_category": "diagnostic",
+        },
+        "force_rotation": {
+            "platform": "button",
+            "unique_id": f"{uid_prefix}_force_rotation",
+            "name": "Force Rotation",
+            "command_topic": f"{base_topic}/ct002/{device_id}/set",
+            "payload_press": '{"force_rotation": true}',
+            "entity_category": "config",
         },
     }
 

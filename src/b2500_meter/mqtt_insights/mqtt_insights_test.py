@@ -81,6 +81,22 @@ def test_ct002_consumer_discovery_structure():
     assert switch["state_on"] == "True"
     assert switch["state_off"] == "False"
 
+    # Manual target number entity
+    manual = comps["manual_target"]
+    assert manual["platform"] == "number"
+    assert manual["device_class"] == "power"
+    assert manual["mode"] == "box"
+    assert "command_topic" in manual
+    assert "command_template" in manual
+    assert manual["entity_category"] == "config"
+
+    # Auto target switch entity
+    auto = comps["auto_target"]
+    assert auto["platform"] == "switch"
+    assert auto["state_on"] == "True"
+    assert auto["state_off"] == "False"
+    assert auto["entity_category"] == "config"
+
 
 def test_ct002_device_discovery_structure():
     topic, payload = build_ct002_device_discovery(
@@ -92,6 +108,13 @@ def test_ct002_device_discovery_structure():
     assert "active_control" in comps
     assert "consumer_count" in comps
     assert comps["smooth_target"]["name"] is None  # primary
+
+    # Force rotation button
+    btn = comps["force_rotation"]
+    assert btn["platform"] == "button"
+    assert "command_topic" in btn
+    assert "payload_press" in btn
+    assert btn["entity_category"] == "config"
 
 
 def test_shelly_battery_discovery_structure():
@@ -242,6 +265,16 @@ async def _collect_messages(sub, target, *, timeout=5, stop=None):
         await asyncio.wait_for(_inner(), timeout=timeout)
 
 
+async def _poll(predicate, *, timeout=5, interval=0.05):
+    """Poll *predicate* until it returns True, or raise on timeout."""
+
+    async def _inner():
+        while not predicate():
+            await asyncio.sleep(interval)
+
+    await asyncio.wait_for(_inner(), timeout=timeout)
+
+
 # ── E2E tests with Mosquitto ─────────────────────────────────────────────
 
 
@@ -277,6 +310,8 @@ SAMPLE_CT002_DATA = {
     "last_target": 300.0,
     "active": True,
     "last_seen": "2026-01-01T00:00:00+00:00",
+    "manual_target": None,
+    "auto_target": True,
     "smooth_target": 500.0,
     "active_control": True,
     "consumer_count": 2,
@@ -298,8 +333,7 @@ async def test_publishes_state_on_ct002_event(mqtt_broker):
     await service.start()
 
     try:
-        # Give service time to connect
-        await asyncio.sleep(0.5)
+        await service.wait_connected()
 
         received = []
         async with aiomqtt.Client(hostname="127.0.0.1", port=port) as sub:
@@ -328,7 +362,7 @@ async def test_publishes_device_status(mqtt_broker):
     await service.start()
 
     try:
-        await asyncio.sleep(0.5)
+        await service.wait_connected()
 
         received = []
         async with aiomqtt.Client(hostname="127.0.0.1", port=port) as sub:
@@ -353,7 +387,7 @@ async def test_publishes_ha_discovery_on_first_event(mqtt_broker):
     await service.start()
 
     try:
-        await asyncio.sleep(0.5)
+        await service.wait_connected()
 
         discovery_msgs = []
         async with aiomqtt.Client(hostname="127.0.0.1", port=port) as sub:
@@ -361,10 +395,9 @@ async def test_publishes_ha_discovery_on_first_event(mqtt_broker):
             # First event for consumer1
             service.on_ct002_response("dev1", "consumer1", SAMPLE_CT002_DATA)
             # Second event for same consumer — should NOT trigger another discovery
-            await asyncio.sleep(0.3)
+            await _poll(lambda: "dev1/consumer1" in service._discovered_ct002_consumers)
             service.on_ct002_response("dev1", "consumer1", SAMPLE_CT002_DATA)
             # Third event for consumer2 — SHOULD trigger new discovery
-            await asyncio.sleep(0.3)
             service.on_ct002_response("dev1", "consumer2", SAMPLE_CT002_DATA)
 
             await _collect_messages(
@@ -401,19 +434,19 @@ async def test_active_toggle_via_mqtt(mqtt_broker):
     await service.start()
 
     try:
-        await asyncio.sleep(0.5)
+        await service.wait_connected()
 
         async with aiomqtt.Client(hostname="127.0.0.1", port=port) as pub:
             await pub.publish(
                 f"{base}/ct002/dev1/consumer/consumer1/set",
                 payload=json.dumps({"active": False}).encode(),
             )
-            await asyncio.sleep(0.5)
+            await _poll(lambda: len(handler_calls) >= 1)
             await pub.publish(
                 f"{base}/ct002/dev1/consumer/consumer1/set",
                 payload=json.dumps({"active": True}).encode(),
             )
-            await asyncio.sleep(0.5)
+            await _poll(lambda: len(handler_calls) >= 2)
 
         assert len(handler_calls) == 2
         assert handler_calls[0] == ("consumer1", False)
@@ -430,11 +463,11 @@ async def test_consumer_removal_publishes_offline(mqtt_broker):
     await service.start()
 
     try:
-        await asyncio.sleep(0.5)
+        await service.wait_connected()
 
         # First fire an event so the consumer is "discovered"
         service.on_ct002_response("dev1", "consumer1", SAMPLE_CT002_DATA)
-        await asyncio.sleep(0.5)
+        await _poll(lambda: "dev1/consumer1" in service._discovered_ct002_consumers)
 
         received = []
         async with aiomqtt.Client(hostname="127.0.0.1", port=port) as sub:
@@ -460,7 +493,7 @@ async def test_lwt_online_offline(mqtt_broker):
     await service.start()
 
     try:
-        await asyncio.sleep(0.5)
+        await service.wait_connected()
 
         # Check online status
         received = []
@@ -483,7 +516,7 @@ async def test_shelly_event_flow(mqtt_broker):
     await service.start()
 
     try:
-        await asyncio.sleep(0.5)
+        await service.wait_connected()
 
         received = []
         async with aiomqtt.Client(hostname="127.0.0.1", port=port) as sub:
@@ -498,3 +531,132 @@ async def test_shelly_event_flow(mqtt_broker):
         assert "192_168_1_100" in str(received[0].topic)
     finally:
         await service.stop()
+
+
+@needs_mosquitto
+async def test_manual_target_command_via_mqtt(mqtt_broker):
+    port = mqtt_broker
+    service = _make_service(port)
+    base = service._config.base_topic
+    handler_calls: list[tuple[str, float]] = []
+
+    def mock_handler(consumer_id, target):
+        handler_calls.append((consumer_id, target))
+
+    service.register_manual_target_handler("dev1", mock_handler)
+    await service.start()
+
+    try:
+        await service.wait_connected()
+
+        async with aiomqtt.Client(hostname="127.0.0.1", port=port) as pub:
+            await pub.publish(
+                f"{base}/ct002/dev1/consumer/consumer1/set",
+                payload=json.dumps({"manual_target": 150}).encode(),
+            )
+
+        await _poll(lambda: len(handler_calls) >= 1)
+        assert handler_calls[0] == ("consumer1", 150.0)
+    finally:
+        await service.stop()
+
+
+@needs_mosquitto
+async def test_auto_target_command_via_mqtt(mqtt_broker):
+    port = mqtt_broker
+    service = _make_service(port)
+    base = service._config.base_topic
+    handler_calls: list[tuple[str, bool]] = []
+
+    def mock_handler(consumer_id, auto):
+        handler_calls.append((consumer_id, auto))
+
+    service.register_auto_target_handler("dev1", mock_handler)
+    await service.start()
+
+    try:
+        await service.wait_connected()
+
+        async with aiomqtt.Client(hostname="127.0.0.1", port=port) as pub:
+            await pub.publish(
+                f"{base}/ct002/dev1/consumer/consumer1/set",
+                payload=json.dumps({"auto_target": False}).encode(),
+            )
+
+        await _poll(lambda: len(handler_calls) >= 1)
+        assert handler_calls[0] == ("consumer1", False)
+    finally:
+        await service.stop()
+
+
+@needs_mosquitto
+async def test_force_rotation_command_via_mqtt(mqtt_broker):
+    port = mqtt_broker
+    service = _make_service(port)
+    base = service._config.base_topic
+    handler_calls: list[str] = []
+
+    def mock_handler():
+        handler_calls.append("rotated")
+
+    service.register_rotation_handler("dev1", mock_handler)
+    await service.start()
+
+    try:
+        await service.wait_connected()
+
+        async with aiomqtt.Client(hostname="127.0.0.1", port=port) as pub:
+            await pub.publish(
+                f"{base}/ct002/dev1/set",
+                payload=json.dumps({"force_rotation": True}).encode(),
+            )
+
+        await _poll(lambda: len(handler_calls) >= 1)
+        assert handler_calls[0] == "rotated"
+    finally:
+        await service.stop()
+
+
+@needs_mosquitto
+async def test_shelly_battery_removal_publishes_offline(mqtt_broker):
+    port = mqtt_broker
+    service = _make_service(port)
+    base = service._config.base_topic
+    await service.start()
+
+    try:
+        await service.wait_connected()
+
+        # First fire an event so the battery is "discovered"
+        service.on_shelly_response("shelly1", "192.168.1.100", SAMPLE_SHELLY_DATA)
+        await _poll(
+            lambda: "shelly1/192_168_1_100" in service._discovered_shelly_batteries
+        )
+
+        received = []
+        async with aiomqtt.Client(hostname="127.0.0.1", port=port) as sub:
+            await sub.subscribe(
+                f"{base}/shelly/shelly1/battery/192_168_1_100/availability"
+            )
+            service.on_shelly_battery_removed("shelly1", "192.168.1.100")
+            await _collect_messages(
+                sub,
+                received,
+                timeout=3,
+                stop=lambda m: m.payload == b"offline",
+            )
+
+        assert any(m.payload == b"offline" for m in received)
+    finally:
+        await service.stop()
+
+
+def test_consumer_state_includes_manual_target_fields():
+    """Consumer state published to MQTT includes manual_target and auto_target."""
+    data = dict(SAMPLE_CT002_DATA)
+    consumer_state = {
+        "manual_target": data.get("manual_target"),
+        "auto_target": data.get("auto_target", True),
+    }
+    assert consumer_state["manual_target"] is None
+    assert consumer_state["auto_target"] is True

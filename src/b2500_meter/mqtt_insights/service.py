@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import ssl
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -40,7 +41,7 @@ class MqttInsightsConfig:
 
 @dataclass
 class _Event:
-    kind: str  # "ct002", "ct002_status", "ct002_remove", "shelly", "shelly_status"
+    kind: str  # "ct002", "ct002_remove", "shelly", "shelly_remove"
     device_id: str
     entity_id: str  # consumer_id / battery ip_slug
     data: dict[str, Any] = field(default_factory=dict)
@@ -56,6 +57,10 @@ class MqttInsightsService:
         self._discovered_shelly_batteries: set[str] = set()
         self._discovered_shelly_devices: set[str] = set()
         self._active_handlers: dict[str, Callable[[str, bool], None]] = {}
+        self._manual_target_handlers: dict[str, Callable[[str, float], None]] = {}
+        self._auto_target_handlers: dict[str, Callable[[str, bool], None]] = {}
+        self._rotation_handlers: dict[str, Callable[[], None]] = {}
+        self._connected = asyncio.Event()
 
     # ── Public API (called from device event listeners) ───────────────
 
@@ -81,15 +86,48 @@ class MqttInsightsService:
         evt = _Event(kind="shelly", device_id=device_id, entity_id=ip_slug, data=data)
         self._put_nowait(evt)
 
+    def on_shelly_battery_removed(self, device_id: str, battery_ip: str) -> None:
+        """Queue Shelly battery removal event."""
+        ip_slug = _sanitize_id(battery_ip)
+        evt = _Event(kind="shelly_remove", device_id=device_id, entity_id=ip_slug)
+        self._put_nowait(evt)
+
     def register_active_handler(
         self, device_id: str, handler: Callable[[str, bool], None]
     ) -> None:
         self._active_handlers[device_id] = handler
 
+    def register_manual_target_handler(
+        self, device_id: str, handler: Callable[[str, float], None]
+    ) -> None:
+        self._manual_target_handlers[device_id] = handler
+
+    def register_auto_target_handler(
+        self, device_id: str, handler: Callable[[str, bool], None]
+    ) -> None:
+        self._auto_target_handlers[device_id] = handler
+
+    def register_rotation_handler(
+        self, device_id: str, handler: Callable[[], None]
+    ) -> None:
+        self._rotation_handlers[device_id] = handler
+
+    def unregister_handlers(self, device_id: str) -> None:
+        """Remove all command handlers for a device (e.g. on device stop)."""
+        self._active_handlers.pop(device_id, None)
+        self._manual_target_handlers.pop(device_id, None)
+        self._auto_target_handlers.pop(device_id, None)
+        self._rotation_handlers.pop(device_id, None)
+
     # ── Lifecycle ─────────────────────────────────────────────────────
 
     async def start(self) -> None:
+        self._connected.clear()
         self._task = asyncio.create_task(self._run())
+
+    async def wait_connected(self, timeout: float = 10) -> None:
+        """Wait until the service has connected and subscribed."""
+        await asyncio.wait_for(self._connected.wait(), timeout=timeout)
 
     async def stop(self) -> None:
         if self._task:
@@ -149,6 +187,9 @@ class MqttInsightsService:
 
                     # Subscribe to command topics
                     await client.subscribe(f"{cfg.base_topic}/ct002/+/consumer/+/set")
+                    await client.subscribe(f"{cfg.base_topic}/ct002/+/set")
+
+                    self._connected.set()
 
                     # Run publish loop and message listener concurrently
                     await asyncio.gather(
@@ -157,12 +198,14 @@ class MqttInsightsService:
                     )
 
             except asyncio.CancelledError:
+                self._connected.clear()
                 # Graceful shutdown: publish offline in a shielded scope
                 # so the pending cancellation doesn't abort the publish.
                 with contextlib.suppress(Exception):
                     await asyncio.shield(self._publish_offline(cfg, tls_context))
                 raise
             except (aiomqtt.MqttError, OSError) as exc:
+                self._connected.clear()
                 logger.warning(
                     "MQTT Insights connection error: %s. Reconnecting in %ss...",
                     exc,
@@ -170,6 +213,7 @@ class MqttInsightsService:
                 )
                 await asyncio.sleep(RECONNECT_DELAY)
             except Exception:
+                self._connected.clear()
                 logger.exception(
                     "MQTT Insights unexpected error, reconnecting in %ss...",
                     RECONNECT_DELAY,
@@ -207,6 +251,8 @@ class MqttInsightsService:
                     await self._handle_ct002_remove(client, base, cfg, evt)
                 elif evt.kind == "shelly":
                     await self._handle_shelly_event(client, base, cfg, evt)
+                elif evt.kind == "shelly_remove":
+                    await self._handle_shelly_remove(client, base, evt)
             except aiomqtt.MqttError:
                 raise
             except Exception:
@@ -242,6 +288,8 @@ class MqttInsightsService:
             "last_target": data.get("last_target"),
             "active": data.get("active", True),
             "last_seen": data.get("last_seen", ""),
+            "manual_target": data.get("manual_target"),
+            "auto_target": data.get("auto_target", True),
         }
 
         await client.publish(
@@ -277,7 +325,11 @@ class MqttInsightsService:
             if consumer_key not in self._discovered_ct002_consumers:
                 self._discovered_ct002_consumers.add(consumer_key)
                 topic, payload = build_ct002_consumer_discovery(
-                    base, did, cid, cfg.ha_discovery_prefix
+                    base,
+                    did,
+                    cid,
+                    cfg.ha_discovery_prefix,
+                    device_type=data.get("device_type", ""),
                 )
                 await client.publish(
                     topic, payload=json.dumps(payload).encode(), retain=True
@@ -355,6 +407,19 @@ class MqttInsightsService:
                     topic, payload=json.dumps(payload).encode(), retain=True
                 )
 
+    async def _handle_shelly_remove(
+        self,
+        client: aiomqtt.Client,
+        base: str,
+        evt: _Event,
+    ) -> None:
+        did = evt.device_id
+        ip_slug = evt.entity_id
+        battery_key = f"{did}/{ip_slug}"
+        avail_topic = f"{base}/shelly/{did}/battery/{ip_slug}/availability"
+        await client.publish(avail_topic, payload=b"offline", retain=True)
+        self._discovered_shelly_batteries.discard(battery_key)
+
     async def _listen_commands(self, client: aiomqtt.Client) -> None:
         base = self._config.base_topic
         prefix = f"{base}/ct002/"
@@ -365,11 +430,7 @@ class MqttInsightsService:
             if not topic_str.startswith(prefix) or not topic_str.endswith(suffix):
                 continue
 
-            # Parse: {base}/ct002/{device_id}/consumer/{consumer_id}/set
-            parts = topic_str[len(prefix) : -len(suffix)].split("/consumer/", 1)
-            if len(parts) != 2:
-                continue
-            device_id, consumer_id = parts
+            middle = topic_str[len(prefix) : -len(suffix)]
 
             raw = message.payload
             try:
@@ -379,12 +440,30 @@ class MqttInsightsService:
                 logger.warning("Invalid command payload on %s", topic_str)
                 continue
 
-            if "active" in cmd:
-                active = bool(cmd["active"])
+            if not isinstance(cmd, dict):
+                logger.warning("Command payload is not a JSON object on %s", topic_str)
+                continue
+
+            # Distinguish device-level vs consumer-level topics.
+            parts = middle.split("/consumer/", 1)
+            if len(parts) == 2:
+                device_id, consumer_id = parts
+                self._handle_consumer_command(device_id, consumer_id, cmd)
+            else:
+                # Device-level: {base}/ct002/{device_id}/set
+                device_id = middle
+                self._handle_device_command(device_id, cmd)
+
+    def _handle_consumer_command(
+        self, device_id: str, consumer_id: str, cmd: dict
+    ) -> None:
+        if "active" in cmd:
+            raw = cmd["active"]
+            if raw is True or raw is False:
                 handler = self._active_handlers.get(device_id)
                 if handler:
                     try:
-                        handler(consumer_id, active)
+                        handler(consumer_id, raw)
                     except Exception:
                         logger.exception(
                             "Active handler error for %s/%s", device_id, consumer_id
@@ -395,3 +474,87 @@ class MqttInsightsService:
                         device_id,
                         consumer_id,
                     )
+            else:
+                logger.warning("Invalid active value for %s/%s", device_id, consumer_id)
+
+        if "manual_target" in cmd:
+            raw_target = cmd["manual_target"]
+            if isinstance(raw_target, bool):
+                logger.warning(
+                    "Invalid manual_target value for %s/%s", device_id, consumer_id
+                )
+            else:
+                try:
+                    target = float(raw_target)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Invalid manual_target value for %s/%s",
+                        device_id,
+                        consumer_id,
+                    )
+                else:
+                    if not math.isfinite(target):
+                        logger.warning(
+                            "Non-finite manual_target for %s/%s",
+                            device_id,
+                            consumer_id,
+                        )
+                    elif not -10000 <= target <= 10000:
+                        logger.warning(
+                            "Out-of-range manual_target for %s/%s: %s",
+                            device_id,
+                            consumer_id,
+                            target,
+                        )
+                    else:
+                        handler = self._manual_target_handlers.get(device_id)
+                        if handler:
+                            try:
+                                handler(consumer_id, target)
+                            except Exception:
+                                logger.exception(
+                                    "Manual target handler error for %s/%s",
+                                    device_id,
+                                    consumer_id,
+                                )
+                        else:
+                            logger.debug(
+                                "No manual_target handler for device %s (consumer %s)",
+                                device_id,
+                                consumer_id,
+                            )
+
+        if "auto_target" in cmd:
+            raw = cmd["auto_target"]
+            if raw is True or raw is False:
+                handler = self._auto_target_handlers.get(device_id)
+                if handler:
+                    try:
+                        handler(consumer_id, raw)
+                    except Exception:
+                        logger.exception(
+                            "Auto target handler error for %s/%s",
+                            device_id,
+                            consumer_id,
+                        )
+                else:
+                    logger.debug(
+                        "No auto_target handler for device %s (consumer %s)",
+                        device_id,
+                        consumer_id,
+                    )
+            else:
+                logger.warning(
+                    "Invalid auto_target value for %s/%s", device_id, consumer_id
+                )
+
+    def _handle_device_command(self, device_id: str, cmd: dict) -> None:
+        if cmd.get("force_rotation") is True:
+            handler = self._rotation_handlers.get(device_id)
+            if handler:
+                try:
+                    handler()
+                except Exception:
+                    logger.exception("Rotation handler error for device %s", device_id)
+            else:
+                logger.debug("No rotation handler for device %s", device_id)

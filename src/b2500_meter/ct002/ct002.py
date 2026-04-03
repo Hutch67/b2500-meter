@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -227,6 +228,8 @@ class CT002:
         self._efficiency_cache_sample: tuple | None = None
         self._efficiency_cache_result: dict[str, float] | None = None
         self._efficiency_fade_weights: dict[str, float] = {}
+        self._manual_target_values: dict[str, float] = {}
+        self._manual_target_enabled: set[str] = set()
         self._transport = None
         self._protocol: _CT002Protocol | None = None
         self._cleanup_task = None
@@ -243,6 +246,64 @@ class CT002:
 
     def _get_consumer_value(self, consumer_id):
         return self._values_by_consumer.get(consumer_id)
+
+    def set_consumer_manual_target(self, consumer_id: str, target: float) -> None:
+        value = float(target)
+        if not math.isfinite(value):
+            msg = f"manual target must be finite, got {target!r}"
+            raise ValueError(msg)
+        self._manual_target_values[consumer_id] = value
+
+    def set_consumer_auto_target(self, consumer_id: str, auto: bool) -> None:
+        """Toggle auto target. auto=True means automatic control (default).
+        auto=False means use manual target override."""
+        if auto:
+            was_manual = consumer_id in self._manual_target_enabled
+            self._manual_target_enabled.discard(consumer_id)
+            if was_manual:
+                # Clear stale control state so the first auto cycle starts fresh.
+                self._last_target_by_consumer.pop(consumer_id, None)
+                self._saturation_by_consumer.pop(consumer_id, None)
+                self._saturation_grace_until[consumer_id] = time.time() + min(
+                    SATURATION_GRACE_SECONDS, self.efficiency_rotation_interval
+                )
+        else:
+            self._manual_target_enabled.add(consumer_id)
+            # Prune from cached efficiency state so auto pool isn't skewed.
+            self._efficiency_deprioritized.discard(consumer_id)
+            self._efficiency_priority = [
+                cid for cid in self._efficiency_priority if cid != consumer_id
+            ]
+            self._efficiency_fade_weights.pop(consumer_id, None)
+            self._efficiency_cache_sample = None
+            self._efficiency_cache_result = None
+
+    def force_efficiency_rotation(self) -> None:
+        # Sync priority list with current auto pool before rotating.
+        current = (
+            set(self._reports_by_consumer)
+            - self._inactive_consumers
+            - self._manual_target_enabled
+        )
+        self._efficiency_priority = [
+            cid for cid in self._efficiency_priority if cid in current
+        ]
+        for cid in sorted(current):
+            if cid not in self._efficiency_priority:
+                self._efficiency_priority.append(cid)
+        self._efficiency_deprioritized.intersection_update(current)
+
+        if len(self._efficiency_priority) < 2:
+            return
+        self._efficiency_priority.append(self._efficiency_priority.pop(0))
+        self._efficiency_last_rotation = time.time()
+        self._efficiency_cache_sample = None
+        self._efficiency_cache_result = None
+        self._efficiency_fade_weights.clear()
+        logger.info(
+            "Efficiency: forced rotation, new order: %s",
+            [c[:16] for c in self._efficiency_priority],
+        )
 
     def set_consumer_active(self, consumer_id: str, active: bool) -> None:
         if active:
@@ -309,6 +370,8 @@ class CT002:
             self._inactive_consumers.discard(key)
             self._efficiency_deprioritized.discard(key)
             self._efficiency_fade_weights.pop(key, None)
+            self._manual_target_values.pop(key, None)
+            self._manual_target_enabled.discard(key)
             if key in self._efficiency_priority:
                 self._efficiency_priority.remove(key)
                 # Invalidate cache so next call rebuilds with updated topology
@@ -639,7 +702,26 @@ class CT002:
 
         if consumer_id and consumer_id in reports:
             actual_self = parse_int(reports.get(consumer_id, {}).get("power", 0))
-            self._update_saturation(consumer_id, last_target, actual_self)
+            # Skip saturation updates when manual override is active: the user-
+            # chosen target may be unreachable and inflating saturation would
+            # cause an immediate swap-out when switching back to auto mode.
+            if consumer_id not in self._manual_target_enabled:
+                self._update_saturation(consumer_id, last_target, actual_self)
+
+        # Manual target override: bypass fair-share / efficiency logic entirely.
+        if consumer_id and consumer_id in self._manual_target_enabled:
+            override = self._manual_target_values.get(consumer_id, 0.0)
+            reported = parse_int(reports.get(consumer_id, {}).get("power", 0))
+            target = override - reported
+            self._last_target_by_consumer[consumer_id] = target
+            return self._split_by_phase(target, reports)
+
+        # Exclude manual-override consumers from the automatic fair-share pool.
+        reports = {
+            cid: r
+            for cid, r in reports.items()
+            if cid not in self._manual_target_enabled
+        }
 
         # Snapshot after _update_saturation may have modified the dict.
         saturation = dict(self._saturation_by_consumer)
@@ -690,21 +772,7 @@ class CT002:
             if consumer_id:
                 self._last_target_by_consumer[consumer_id] = target
 
-            phase = (reports.get(consumer_id, {}).get("phase") or "A").upper()
-            phase_effective = {"A": 0.0, "B": 0.0, "C": 0.0}
-            for cid, report in reports.items():
-                p = (report.get("phase") or "A").upper()
-                if p not in phase_effective:
-                    p = "A"
-                phase_effective[p] += eff_part.get(cid, 1.0)
-            total_phase_effective = sum(phase_effective.values())
-            if total_phase_effective <= 0:
-                return [target, 0, 0]
-            return [
-                target * (phase_effective["A"] / total_phase_effective),
-                target * (phase_effective["B"] / total_phase_effective),
-                target * (phase_effective["C"] / total_phase_effective),
-            ]
+            return self._split_by_phase(target, reports, eff_part)
 
         # Non-fading path: fully converged deprioritizations and normal
         # fair-share distribution.
@@ -787,13 +855,25 @@ class CT002:
         if consumer_id:
             self._last_target_by_consumer[consumer_id] = target
 
-        # Distribute target across phases according to active consumer phase mapping.
-        phase_effective = {"A": 0.0, "B": 0.0, "C": 0.0}
+        return self._split_by_phase(target, reports, eff_part)
+
+    def _split_by_phase(
+        self,
+        target: float,
+        reports: dict,
+        weights: dict[str, float] | None = None,
+    ) -> list[float]:
+        """Distribute *target* across phases according to consumer phase mapping.
+
+        *weights* maps consumer_id → effective weight (defaults to 1.0 each).
+        """
+        phase_effective: dict[str, float] = {"A": 0.0, "B": 0.0, "C": 0.0}
         for cid, report in reports.items():
             phase = (report.get("phase") or "A").upper()
             if phase not in phase_effective:
                 phase = "A"
-            phase_effective[phase] += eff_part.get(cid, 1.0)
+            w = (weights or {}).get(cid, 1.0)
+            phase_effective[phase] += w
 
         total_phase_effective = sum(phase_effective.values())
         if total_phase_effective <= 0:
@@ -1066,6 +1146,8 @@ class CT002:
                     "smooth_target": self._smoothed_target
                     if self._smoothed_target is not None
                     else 0.0,
+                    "manual_target": self._manual_target_values.get(consumer_id),
+                    "auto_target": consumer_id not in self._manual_target_enabled,
                     "active_control": self.active_control,
                     "consumer_count": len(self._reports_by_consumer),
                 },
