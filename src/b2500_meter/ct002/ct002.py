@@ -4,6 +4,8 @@ import asyncio
 import contextlib
 import time
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
+from typing import Any
 
 from b2500_meter.config.logger import logger
 
@@ -168,6 +170,7 @@ class CT002:
         efficiency_fade_alpha=0.15,
         efficiency_saturation_threshold=0.4,
         saturation_decay_factor=0.995,
+        device_id="",
     ):
         self.udp_port = udp_port
         self.ct_mac = ct_mac
@@ -201,6 +204,9 @@ class CT002:
         self.before_send: (
             Callable[[tuple, list, str], Awaitable[list[float] | None]] | None
         ) = None
+        self.event_listener: Callable[[str, str, dict[str, Any]], None] | None = None
+        self._device_id = device_id
+        self._inactive_consumers: set[str] = set()
         self._info_idx_counter = 0
         self._values_by_consumer = {}
         self._reports_by_consumer = {}
@@ -231,6 +237,27 @@ class CT002:
 
     def _get_consumer_value(self, consumer_id):
         return self._values_by_consumer.get(consumer_id)
+
+    def set_consumer_active(self, consumer_id: str, active: bool) -> None:
+        if active:
+            self._inactive_consumers.discard(consumer_id)
+            # Clear stale control state so the resumed consumer starts fresh
+            # and isn't immediately deprioritized by old saturation scores.
+            self._saturation_by_consumer.pop(consumer_id, None)
+            self._last_target_by_consumer.pop(consumer_id, None)
+        else:
+            self._inactive_consumers.add(consumer_id)
+
+    def is_consumer_active(self, consumer_id: str) -> bool:
+        return consumer_id not in self._inactive_consumers
+
+    def _call_event_listener(self, consumer_id: str, data: dict[str, Any]) -> None:
+        if not self.event_listener:
+            return
+        try:
+            self.event_listener(self._device_id, consumer_id, data)
+        except Exception as exc:
+            logger.warning("event_listener failed for %s: %s", consumer_id, exc)
 
     def _update_consumer_report(self, consumer_id, phase, power, device_type=""):
         normalized_phase = str(phase).upper() if phase else "A"
@@ -266,10 +293,13 @@ class CT002:
             if now - report.get("timestamp", 0) > self.consumer_ttl
         ]
         for key in stale:
+            # Sentinel: {"_removed": True} signals consumer removal to the event listener
+            self._call_event_listener(key, {"_removed": True})
             self._reports_by_consumer.pop(key, None)
             self._values_by_consumer.pop(key, None)
             self._last_target_by_consumer.pop(key, None)
             self._saturation_by_consumer.pop(key, None)
+            self._inactive_consumers.discard(key)
             self._efficiency_deprioritized.discard(key)
             self._efficiency_fade_weights.pop(key, None)
             if key in self._efficiency_priority:
@@ -380,8 +410,9 @@ class CT002:
             self._efficiency_priority.append(self._efficiency_priority.pop(0))
             self._efficiency_cache_sample = None  # force recompute
 
-        # Sync priority list with current consumers (prune stale, add new at end)
-        current = set(reports)
+        # Sync priority list with current active consumers
+        # (prune stale/inactive, add new at end)
+        current = set(reports) - self._inactive_consumers
         self._efficiency_priority = [
             c for c in self._efficiency_priority if c in current
         ]
@@ -526,6 +557,7 @@ class CT002:
         """
         if not self.active_control or not values or len(values) != 3:
             return values
+
         raw_total = sum(parse_int(v, 0) for v in values)
         alpha = self.smooth_target_alpha
 
@@ -552,7 +584,27 @@ class CT002:
                 )
             self._smoothed_target += delta
 
-        reports = dict(self._reports_by_consumer)
+        # Paused consumer: actively steer its output to zero by sending
+        # target = -reported_power on its phase (same logic as efficiency
+        # deprioritization).  The consumer is excluded from fair distribution
+        # and efficiency rotation.  Smoothing above is still updated so
+        # remaining active consumers see an accurate grid residual.
+        if consumer_id and consumer_id in self._inactive_consumers:
+            reports = self._reports_by_consumer
+            reported = parse_int(reports.get(consumer_id, {}).get("power", 0))
+            self._last_target_by_consumer[consumer_id] = 0
+            if reported == 0:
+                return [0, 0, 0]
+            phase = (reports.get(consumer_id, {}).get("phase") or "A").upper()
+            result = [0.0, 0.0, 0.0]
+            result[{"A": 0, "B": 1, "C": 2}.get(phase, 0)] = float(-reported)
+            return result
+
+        reports = {
+            cid: r
+            for cid, r in self._reports_by_consumer.items()
+            if cid not in self._inactive_consumers
+        }
         last_target = self._last_target_by_consumer.get(consumer_id)
 
         if consumer_id and consumer_id in reports:
@@ -922,9 +974,13 @@ class CT002:
         values = self._get_consumer_value(consumer_id)
         if values is None:
             values = [0, 0, 0]
-        meter_value = sum(parse_int(v, 0) for v in values)
+        raw_values = ([*list(values), 0, 0, 0])[:3]
+        meter_value = sum(parse_int(v, 0) for v in raw_values)
+        is_active = self.is_consumer_active(consumer_id)
         if self.active_control and not in_inspection_mode:
             values = self._compute_smooth_target(values, consumer_id)
+        values = ([*list(values), 0, 0, 0])[:3]
+
         try:
             response_fields = self._build_response_fields(fields, values)
             response = build_payload(response_fields)
@@ -949,6 +1005,41 @@ class CT002:
                 self._format_status(values, phase_values, consumer_id, meter_value),
             )
         transport.sendto(response, addr)
+
+        # Fire event listener after response is sent
+        if not in_inspection_mode:
+            report = self._reports_by_consumer.get(consumer_id, {})
+            self._call_event_listener(
+                consumer_id,
+                {
+                    "grid_power": {
+                        "l1": float(raw_values[0]),
+                        "l2": float(raw_values[1]),
+                        "l3": float(raw_values[2]),
+                        "total": sum(float(v) for v in raw_values),
+                    },
+                    "target": {
+                        "l1": float(values[0]),
+                        "l2": float(values[1]),
+                        "l3": float(values[2]),
+                    },
+                    "phase": report.get("phase", reported_phase),
+                    "reported_power": reported_power,
+                    "device_type": report.get("device_type", ""),
+                    "battery_ip": addr[0],
+                    "ct_type": fields[2] if len(fields) > 2 else "",
+                    "ct_mac": fields[3] if len(fields) > 3 else "",
+                    "saturation": self._saturation_by_consumer.get(consumer_id, 0.0),
+                    "last_target": self._last_target_by_consumer.get(consumer_id),
+                    "active": is_active,
+                    "last_seen": datetime.now(timezone.utc).isoformat(),
+                    "smooth_target": self._smoothed_target
+                    if self._smoothed_target is not None
+                    else 0.0,
+                    "active_control": self.active_control,
+                    "consumer_count": len(self._reports_by_consumer),
+                },
+            )
 
     async def _cleanup_loop(self):
         try:
