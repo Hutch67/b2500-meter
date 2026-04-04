@@ -14,4 +14,5 @@ from .json_http import JsonHttpPowermeter
 from .script import Script
 from .throttling import ThrottledPowermeter
 from .ema import ExponentialMovingAveragePowermeter
+from .offset import OffsetPowermeter
 from .tq_em import TQEnergyManager

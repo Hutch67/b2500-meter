@@ -25,6 +25,7 @@ from powermeter import (
     TQEnergyManager,
     ThrottledPowermeter,
     ExponentialMovingAveragePowermeter,
+    OffsetPowermeter,
 )
 
 SHELLY_SECTION = "SHELLY"
@@ -65,6 +66,7 @@ def read_all_powermeter_configs(
         "GENERAL", "THROTTLE_INTERVAL", fallback=0.0
     )
     global_ema_alpha = config.getfloat("GENERAL", "EMA_ALPHA", fallback=0.0)
+    global_power_offset = config.getfloat("GENERAL", "POWER_OFFSET", fallback=0.0)
 
     for section in config.sections():
         powermeter = create_powermeter(section, config)
@@ -103,6 +105,20 @@ def read_all_powermeter_configs(
                 powermeter = ExponentialMovingAveragePowermeter(
                     powermeter, alpha=section_ema_alpha
                 )
+
+            section_power_offset = config.getfloat(
+                section, "POWER_OFFSET", fallback=global_power_offset
+            )
+            if section_power_offset != 0.0:
+                offset_source = (
+                    "section-specific"
+                    if config.has_option(section, "POWER_OFFSET")
+                    else "global"
+                )
+                print(
+                    f"Applying {offset_source} power offset ({section_power_offset}W) to {section}"
+                )
+                powermeter = OffsetPowermeter(powermeter, offset=section_power_offset)
 
             client_filter = create_client_filter(section, config)
             powermeters.append((powermeter, client_filter))
