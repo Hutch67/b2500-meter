@@ -88,6 +88,10 @@ def read_all_powermeter_configs(
                 section, "EMA_ALPHA", fallback=global_ema_alpha
             )
             if section_ema_alpha > 0:
+                if section_ema_alpha > 1.0:
+                    raise ValueError(
+                        f"EMA_ALPHA in [{section}] must be in the range (0, 1], got {section_ema_alpha}"
+                    )
                 ema_source = (
                     "section-specific"
                     if config.has_option(section, "EMA_ALPHA")
