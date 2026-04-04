@@ -16,6 +16,16 @@ POLL_INTERVAL = 1
 # Recommended values: 1-3 seconds for slower data sources
 # Can be overridden per powermeter section
 THROTTLE_INTERVAL = 0
+# Global EMA (exponential moving average) smoothing factor - applies to all powermeters unless overridden
+# Smooths out short-term fluctuations in power readings before sending them to the client
+# EMA formula: ema = alpha * raw_value + (1 - alpha) * previous_ema
+# alpha must be in the range (0, 1]:
+#   - Values close to 0 produce heavy smoothing (slow to react to changes)
+#   - Values close to 1 produce little smoothing (close to the raw reading)
+#   - Set to 0 to disable EMA (default)
+# Recommended values: 0.1 (heavy) to 0.5 (moderate) smoothing
+# Can be overridden per powermeter section
+EMA_ALPHA = 0
 
 #[SHELLY]
 #TYPE = 1PM #PLUS1PM #EM #3EM #3EMPRO
@@ -26,6 +36,8 @@ THROTTLE_INTERVAL = 0
 ## Per-powermeter throttling override (optional)
 ## Shelly devices are typically fast, so throttling may not be needed
 #THROTTLE_INTERVAL = 0
+## Per-powermeter EMA smoothing override (optional, range (0, 1])
+#EMA_ALPHA = 0
 
 #[TASMOTA]
 #IP = 192.168.1.101

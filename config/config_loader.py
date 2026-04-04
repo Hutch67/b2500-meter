@@ -24,6 +24,7 @@ from powermeter import (
     JsonHttpPowermeter,
     TQEnergyManager,
     ThrottledPowermeter,
+    ExponentialMovingAveragePowermeter,
 )
 
 SHELLY_SECTION = "SHELLY"
@@ -63,6 +64,7 @@ def read_all_powermeter_configs(
     global_throttle_interval = config.getfloat(
         "GENERAL", "THROTTLE_INTERVAL", fallback=0.0
     )
+    global_ema_alpha = config.getfloat("GENERAL", "EMA_ALPHA", fallback=0.0)
 
     for section in config.sections():
         powermeter = create_powermeter(section, config)
@@ -81,6 +83,26 @@ def read_all_powermeter_configs(
                     f"Applying {throttle_source} throttling ({section_throttle_interval}s) to {section}"
                 )
                 powermeter = ThrottledPowermeter(powermeter, section_throttle_interval)
+
+            section_ema_alpha = config.getfloat(
+                section, "EMA_ALPHA", fallback=global_ema_alpha
+            )
+            if section_ema_alpha > 0:
+                if section_ema_alpha > 1.0:
+                    raise ValueError(
+                        f"EMA_ALPHA in [{section}] must be in the range (0, 1], got {section_ema_alpha}"
+                    )
+                ema_source = (
+                    "section-specific"
+                    if config.has_option(section, "EMA_ALPHA")
+                    else "global"
+                )
+                print(
+                    f"Applying {ema_source} EMA smoothing (alpha={section_ema_alpha}) to {section}"
+                )
+                powermeter = ExponentialMovingAveragePowermeter(
+                    powermeter, alpha=section_ema_alpha
+                )
 
             client_filter = create_client_filter(section, config)
             powermeters.append((powermeter, client_filter))
