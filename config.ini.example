@@ -26,6 +26,12 @@ THROTTLE_INTERVAL = 0
 # Recommended values: 0.1 (heavy) to 0.5 (moderate) smoothing
 # Can be overridden per powermeter section
 EMA_ALPHA = 0
+# Global power offset (in watts) - added to all power readings from all powermeters unless overridden
+# Useful to compensate for a known systematic measurement error or to factor in a constant baseline load
+# Positive values increase the reported power; negative values decrease it
+# Set to 0 to disable (default)
+# Can be overridden per powermeter section
+POWER_OFFSET = 0
 
 #[SHELLY]
 #TYPE = 1PM #PLUS1PM #EM #3EM #3EMPRO
@@ -38,6 +44,8 @@ EMA_ALPHA = 0
 #THROTTLE_INTERVAL = 0
 ## Per-powermeter EMA smoothing override (optional, range (0, 1])
 #EMA_ALPHA = 0
+## Per-powermeter power offset override in watts (optional, can be negative)
+#POWER_OFFSET = 0
 
 #[TASMOTA]
 #IP = 192.168.1.101
