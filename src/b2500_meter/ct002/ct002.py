@@ -50,6 +50,7 @@ __all__ = [
 
 UDP_PORT = 12345
 CLEANUP_INTERVAL_SECONDS = 5
+POLL_INTERVAL_EMA_ALPHA = 0.3
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +70,7 @@ class Consumer:
     power: int = 0
     timestamp: float = 0.0
     device_type: str = ""
+    poll_interval: float | None = None
     # Control state (set by explicit API calls)
     manual_target: float = 0.0
     manual_enabled: bool = False
@@ -250,9 +252,20 @@ class CT002:
         normalized_phase = str(phase).upper() if phase else "A"
         consumer = self._get_consumer(consumer_id)
         previous_phase = consumer.phase if consumer.timestamp > 0 else None
+        now = time.time()
+        if consumer.timestamp > 0:
+            raw_interval = now - consumer.timestamp
+            if consumer.poll_interval is None:
+                consumer.poll_interval = round(raw_interval, 1)
+            else:
+                consumer.poll_interval = round(
+                    POLL_INTERVAL_EMA_ALPHA * raw_interval
+                    + (1 - POLL_INTERVAL_EMA_ALPHA) * consumer.poll_interval,
+                    1,
+                )
         consumer.phase = normalized_phase
         consumer.power = parse_int(power, 0)
-        consumer.timestamp = time.time()
+        consumer.timestamp = now
         consumer.device_type = device_type
 
         if normalized_phase in ("A", "B", "C") and previous_phase != normalized_phase:
@@ -592,6 +605,7 @@ class CT002:
                     "saturation": self._balancer.get_saturation(consumer_id),
                     "last_target": self._balancer.get_last_target(consumer_id),
                     "active": is_active,
+                    "poll_interval": consumer.poll_interval if consumer else None,
                     "last_seen": datetime.now(timezone.utc).isoformat(),
                     "smooth_target": self._smoother.value
                     if self._smoother.value is not None
