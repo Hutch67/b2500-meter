@@ -74,7 +74,6 @@ def run_device(
             if args.poll_interval is not None
             else cfg.getint("GENERAL", "POLL_INTERVAL", fallback=1)
         )
-
         logger.debug(f"CT001 Settings for {device_id}:")
         logger.debug(f"Disable Sum Phases: {disable_sum}")
         logger.debug(f"Disable Absolute Values: {disable_absolute}")
