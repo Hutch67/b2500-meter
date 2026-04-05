@@ -9,7 +9,6 @@ Also serves a web-based configuration editor at /config.
 
 import json
 import os
-import signal
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -102,10 +101,12 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         elif normalized_path == "/api/restart":
             self._json_response(200, {"success": True, "message": "Service is restarting..."})
             logger.info("Restart requested via web UI")
-            # Send SIGTERM after a short delay so the HTTP response is flushed first.
-            # Docker (restart: unless-stopped) will restart the container automatically.
+            # Use os._exit() rather than SIGTERM so the process terminates
+            # unconditionally even when the main thread is blocked in native I/O.
+            # Docker (restart: unless-stopped) will restart the container with
+            # the updated config.ini loaded from scratch.
             _RESTART_DELAY_SECONDS = 0.5
-            threading.Timer(_RESTART_DELAY_SECONDS, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
+            threading.Timer(_RESTART_DELAY_SECONDS, lambda: os._exit(0)).start()
 
         else:
             self._json_response(404, {"error": "Not Found"})
