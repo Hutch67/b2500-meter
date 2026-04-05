@@ -32,6 +32,34 @@ EMA_ALPHA = 0
 # Set to 0 to disable (default)
 # Can be overridden per powermeter section
 POWER_OFFSET = 0
+# Global slew-rate limiter (in watts per second) - limits how quickly the reported value can change
+# Even if the raw reading jumps instantly by a large amount, the value reported to the storage system
+# ramps towards the target at most this many watts per second.
+# This prevents sudden large steps from triggering an aggressive over-response that causes oscillation.
+# Set to 0 to disable (default)
+# Example: SLEW_RATE_WATTS_PER_SEC = 100  (max 100 W/s ramp rate)
+# Can be overridden per powermeter section
+SLEW_RATE_WATTS_PER_SEC = 0
+# Global dead-band filter (in watts) - suppresses reported power changes smaller than this threshold
+# A new value is only forwarded when at least one phase has moved more than this many watts from the
+# last reported value. This is the most effective way to prevent oscillation near the operating point.
+# Set to 0 to disable (default)
+# Example: DEADBAND_WATTS = 50  (ignore changes ≤ 50 W)
+# Can be overridden per powermeter section
+DEADBAND_WATTS = 0
+# Global hold timer (in seconds) - holds each reported value for a minimum duration before updating
+# Once a value is forwarded to the storage system it is held constant for this many seconds, giving
+# the system time to physically respond before receiving another update.
+# Set to 0 to disable (default)
+# Example: HOLD_TIME = 5  (hold each reported value for at least 5 seconds)
+# Can be overridden per powermeter section
+HOLD_TIME = 0
+# Per-phase dead-band for CT001 phase summing (in watts, ct001 only)
+# Applied to each individual phase BEFORE phases are summed into a single value.
+# Useful when per-phase fluctuations cancel each other and cause the summed value to oscillate.
+# Set to 0 to disable (default)
+# Example: PER_PHASE_DEADBAND_WATTS = 30
+PER_PHASE_DEADBAND_WATTS = 0
 
 #[SHELLY]
 #TYPE = 1PM #PLUS1PM #EM #3EM #3EMPRO
@@ -44,6 +72,12 @@ POWER_OFFSET = 0
 #THROTTLE_INTERVAL = 0
 ## Per-powermeter EMA smoothing override (optional, range (0, 1])
 #EMA_ALPHA = 0
+## Per-powermeter slew-rate limiter override in watts per second (optional)
+#SLEW_RATE_WATTS_PER_SEC = 0
+## Per-powermeter dead-band filter override in watts (optional)
+#DEADBAND_WATTS = 0
+## Per-powermeter hold timer override in seconds (optional)
+#HOLD_TIME = 0
 ## Per-powermeter power offset override in watts (optional, can be negative)
 #POWER_OFFSET = 0
 

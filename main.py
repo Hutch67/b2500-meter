@@ -74,13 +74,20 @@ def run_device(
             if args.poll_interval is not None
             else cfg.getint("GENERAL", "POLL_INTERVAL", fallback=1)
         )
+        per_phase_deadband = cfg.getfloat(
+            "GENERAL", "PER_PHASE_DEADBAND_WATTS", fallback=0.0
+        )
 
         logger.debug(f"CT001 Settings for {device_id}:")
         logger.debug(f"Disable Sum Phases: {disable_sum}")
         logger.debug(f"Disable Absolute Values: {disable_absolute}")
         logger.debug(f"Poll Interval: {poll_interval}")
+        logger.debug(f"Per-Phase Dead-Band: {per_phase_deadband} W")
 
         device = CT001(poll_interval=poll_interval)
+
+        # Per-phase dead-band state (one held value per phase)
+        _phase_held = [None, None, None]
 
         def update_readings(addr):
             powermeter = None
@@ -96,6 +103,13 @@ def run_device(
             value1 = values[0] if len(values) > 0 else 0
             value2 = values[1] if len(values) > 1 else 0
             value3 = values[2] if len(values) > 2 else 0
+
+            if per_phase_deadband > 0:
+                raw_phases = [value1, value2, value3]
+                for i, raw in enumerate(raw_phases):
+                    if _phase_held[i] is None or abs(raw - _phase_held[i]) > per_phase_deadband:
+                        _phase_held[i] = raw
+                value1, value2, value3 = _phase_held
 
             if not disable_sum:
                 value1 = value1 + value2 + value3
