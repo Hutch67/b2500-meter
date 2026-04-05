@@ -25,6 +25,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 
     # Set by HealthCheckService before the server starts
     config_path = None
+    enable_web_config = True
 
     def do_GET(self):
         """Handle GET requests."""
@@ -42,18 +43,25 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self.wfile.write(b'{"status": "healthy", "service": "b2500-meter"}')
 
         elif normalized_path == "":
-            # Redirect root to /config
+            # Redirect root to /config when enabled, otherwise to /health
+            target = "/config" if self.enable_web_config else "/health"
             self.send_response(302)
-            self.send_header("Location", "/config")
+            self.send_header("Location", target)
             self.end_headers()
 
         elif normalized_path == "/config":
+            if not self.enable_web_config:
+                self._json_response(404, {"error": "Not Found"})
+                return
             self.send_response(200)
             self.send_header("Content-type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(CONFIG_EDITOR_HTML.encode("utf-8"))
 
         elif normalized_path == "/api/config":
+            if not self.enable_web_config:
+                self._json_response(404, {"error": "Not Found"})
+                return
             if self.config_path is None:
                 self._json_response(
                     500, {"error": "Config path not set"}
@@ -82,6 +90,9 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         normalized_path = self.path.split("?")[0].rstrip("/")
 
         if normalized_path == "/api/config":
+            if not self.enable_web_config:
+                self._json_response(404, {"error": "Not Found"})
+                return
             if self.config_path is None:
                 self._json_response(500, {"error": "Config path not set"})
                 return
@@ -99,6 +110,9 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                 self._json_response(500, {"error": str(e)})
 
         elif normalized_path == "/api/restart":
+            if not self.enable_web_config:
+                self._json_response(404, {"error": "Not Found"})
+                return
             self._json_response(200, {"success": True, "message": "Service is restarting..."})
             logger.info("Restart requested via web UI")
             # Use os._exit() rather than SIGTERM so the process terminates
@@ -139,10 +153,11 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 class HealthCheckService:
     """Health check and configuration-editor service manager."""
 
-    def __init__(self, port=52500, bind_address="0.0.0.0", config_path=None):
+    def __init__(self, port=52500, bind_address="0.0.0.0", config_path=None, enable_web_config=True):
         self.port = port
         self.bind_address = bind_address
         self.config_path = config_path
+        self.enable_web_config = enable_web_config
         self.server = None
         self.server_thread = None
         self._running = False
@@ -154,8 +169,9 @@ class HealthCheckService:
             return False
 
         try:
-            # Inject config_path into the handler class before binding.
+            # Inject config_path and enable_web_config into the handler class before binding.
             HealthCheckHandler.config_path = self.config_path
+            HealthCheckHandler.enable_web_config = self.enable_web_config
 
             self.server = HTTPServer((self.bind_address, self.port), HealthCheckHandler)
             self.server_thread = threading.Thread(
@@ -175,9 +191,14 @@ class HealthCheckService:
             logger.info(
                 f"Health check service started on {self.bind_address}:{self.port}"
             )
-            if self.config_path:
+            if self.enable_web_config and self.config_path:
                 logger.info(
-                    f"Config editor available at http://{self.bind_address}:{self.port}/config"
+                    f"Config editor enabled — accessible at "
+                    f"http://{self.bind_address}:{self.port}/config"
+                )
+            else:
+                logger.info(
+                    "Config editor disabled (WEB_CONFIG_ENABLED = False)"
                 )
 
             # Test the endpoint to ensure it's working
@@ -247,7 +268,7 @@ class HealthCheckService:
 _health_service = None
 
 
-def start_health_service(port=52500, bind_address="0.0.0.0", config_path=None):
+def start_health_service(port=52500, bind_address="0.0.0.0", config_path=None, enable_web_config=True):
     """
     Start the global health check service.
 
@@ -255,6 +276,7 @@ def start_health_service(port=52500, bind_address="0.0.0.0", config_path=None):
         port (int): Port to bind to (default: 52500)
         bind_address (str): Address to bind to (default: '0.0.0.0')
         config_path (str | None): Path to config.ini for the web editor
+        enable_web_config (bool): Whether to enable the web config editor (default: True)
 
     Returns:
         bool: True if started successfully, False otherwise
@@ -266,7 +288,8 @@ def start_health_service(port=52500, bind_address="0.0.0.0", config_path=None):
         return True
 
     _health_service = HealthCheckService(
-        port=port, bind_address=bind_address, config_path=config_path
+        port=port, bind_address=bind_address, config_path=config_path,
+        enable_web_config=enable_web_config,
     )
     return _health_service.start()
 
