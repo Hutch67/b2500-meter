@@ -26,6 +26,9 @@ from powermeter import (
     ThrottledPowermeter,
     ExponentialMovingAveragePowermeter,
     OffsetPowermeter,
+    SlewRatePowermeter,
+    DeadBandPowermeter,
+    HoldTimerPowermeter,
 )
 
 SHELLY_SECTION = "SHELLY"
@@ -67,6 +70,11 @@ def read_all_powermeter_configs(
     )
     global_ema_alpha = config.getfloat("GENERAL", "EMA_ALPHA", fallback=0.0)
     global_ema_interval = config.getfloat("GENERAL", "EMA_INTERVAL", fallback=0.0)
+    global_slew_rate = config.getfloat(
+        "GENERAL", "SLEW_RATE_WATTS_PER_SEC", fallback=0.0
+    )
+    global_deadband_watts = config.getfloat("GENERAL", "DEADBAND_WATTS", fallback=0.0)
+    global_hold_time = config.getfloat("GENERAL", "HOLD_TIME", fallback=0.0)
     global_power_offset = config.getfloat("GENERAL", "POWER_OFFSET", fallback=0.0)
 
     for section in config.sections():
@@ -120,6 +128,48 @@ def read_all_powermeter_configs(
                 powermeter = ExponentialMovingAveragePowermeter(
                     powermeter, alpha=section_ema_alpha, ema_interval=section_ema_interval
                 )
+
+            section_slew_rate = config.getfloat(
+                section, "SLEW_RATE_WATTS_PER_SEC", fallback=global_slew_rate
+            )
+            if section_slew_rate > 0:
+                slew_source = (
+                    "section-specific"
+                    if config.has_option(section, "SLEW_RATE_WATTS_PER_SEC")
+                    else "global"
+                )
+                print(
+                    f"Applying {slew_source} slew-rate limit ({section_slew_rate} W/s) to {section}"
+                )
+                powermeter = SlewRatePowermeter(powermeter, section_slew_rate)
+
+            section_deadband_watts = config.getfloat(
+                section, "DEADBAND_WATTS", fallback=global_deadband_watts
+            )
+            if section_deadband_watts > 0:
+                deadband_source = (
+                    "section-specific"
+                    if config.has_option(section, "DEADBAND_WATTS")
+                    else "global"
+                )
+                print(
+                    f"Applying {deadband_source} dead-band filter ({section_deadband_watts} W) to {section}"
+                )
+                powermeter = DeadBandPowermeter(powermeter, section_deadband_watts)
+
+            section_hold_time = config.getfloat(
+                section, "HOLD_TIME", fallback=global_hold_time
+            )
+            if section_hold_time > 0:
+                hold_source = (
+                    "section-specific"
+                    if config.has_option(section, "HOLD_TIME")
+                    else "global"
+                )
+                print(
+                    f"Applying {hold_source} hold timer ({section_hold_time}s) to {section}"
+                )
+                powermeter = HoldTimerPowermeter(powermeter, section_hold_time)
 
             section_power_offset = config.getfloat(
                 section, "POWER_OFFSET", fallback=global_power_offset

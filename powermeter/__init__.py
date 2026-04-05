@@ -15,4 +15,7 @@ from .script import Script
 from .throttling import ThrottledPowermeter
 from .ema import ExponentialMovingAveragePowermeter
 from .offset import OffsetPowermeter
+from .slewrate import SlewRatePowermeter
+from .deadband import DeadBandPowermeter
+from .holdtimer import HoldTimerPowermeter
 from .tq_em import TQEnergyManager
