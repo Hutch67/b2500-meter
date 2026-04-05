@@ -145,6 +145,13 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def handle(self):
+        """Handle a request, suppressing broken-pipe errors from clients that disconnect early."""
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def log_message(self, format, *args):
         """Suppress default HTTP server logging to avoid spam."""
         pass
