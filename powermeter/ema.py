@@ -1,6 +1,6 @@
 import threading
 import time
-from typing import List, Optional
+from typing import List
 from config.logger import logger
 from .base import Powermeter
 
@@ -55,7 +55,7 @@ class ExponentialMovingAveragePowermeter(Powermeter):
             raise ValueError(f"EMA alpha must be in the range (0, 1], got {alpha}")
         self.wrapped_powermeter = wrapped_powermeter
         self.alpha = alpha
-        self.ema_values: Optional[List[float]] = None
+        self.ema_values: List[float] = []
         self._lock = threading.Lock()
         self._ema_interval = ema_interval
 
@@ -68,7 +68,7 @@ class ExponentialMovingAveragePowermeter(Powermeter):
 
     def _apply_ema(self, raw_values: List[float]) -> None:
         """Update ``self.ema_values`` in-place with one EMA step (caller holds lock)."""
-        if self.ema_values is None:
+        if not self.ema_values:
             self.ema_values = list(raw_values)
         else:
             self.ema_values = [
@@ -104,16 +104,16 @@ class ExponentialMovingAveragePowermeter(Powermeter):
             waited = 0.0
             while not self._first_reading_event.wait(timeout=1.0):
                 waited += 1.0
-                if waited % 30.0 == 0:
+                if waited > 0 and waited % 30.0 == 0:
                     logger.warning(
                         f"EMA background thread has not produced a reading after "
                         f"{waited:.0f}s; still waiting..."
                     )
             with self._lock:
-                return list(self.ema_values)  # type: ignore[arg-type]
+                return list(self.ema_values)
 
         # Original synchronous mode: fetch and update EMA on every call.
         raw_values = self.wrapped_powermeter.get_powermeter_watts()
         with self._lock:
             self._apply_ema(raw_values)
-        return list(self.ema_values)  # type: ignore[arg-type]
+        return list(self.ema_values)
