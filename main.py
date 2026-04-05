@@ -226,7 +226,7 @@ def main():
 
     # Start health check server for watchdog monitoring
     if cfg.getboolean("GENERAL", "ENABLE_HEALTH_CHECK", fallback=True):
-        web_config_enabled = cfg.getboolean("GENERAL", "WEB_CONFIG_ENABLED", fallback=True)
+        web_config_enabled = cfg.getboolean("GENERAL", "WEB_CONFIG_ENABLED", fallback=False)
         logger.info("Starting health check service...")
         if start_health_service(config_path=args.config, enable_web_config=web_config_enabled):
             logger.info("Health check service started successfully")

@@ -5,7 +5,7 @@ DEVICE_TYPE = ct001
 SKIP_POWERMETER_TEST = False
 # Enable or disable the web-based configuration editor (served on the health-check port 52500)
 # When True, the editor is accessible at http://<host>:52500/config — set to False to disable
-WEB_CONFIG_ENABLED = True
+WEB_CONFIG_ENABLED = False
 # Sum power values of all phases and report on phase 1 (ct001 only and default is False)
 DISABLE_SUM_PHASES = False
 # Send absolute values (necessary for storage system) (ct001 only and default is False)

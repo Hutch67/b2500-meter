@@ -25,7 +25,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 
     # Set by HealthCheckService before the server starts
     config_path = None
-    enable_web_config = True
+    enable_web_config = False
 
     def do_GET(self):
         """Handle GET requests."""
@@ -153,7 +153,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 class HealthCheckService:
     """Health check and configuration-editor service manager."""
 
-    def __init__(self, port=52500, bind_address="0.0.0.0", config_path=None, enable_web_config=True):
+    def __init__(self, port=52500, bind_address="0.0.0.0", config_path=None, enable_web_config=False):
         self.port = port
         self.bind_address = bind_address
         self.config_path = config_path
@@ -268,7 +268,7 @@ class HealthCheckService:
 _health_service = None
 
 
-def start_health_service(port=52500, bind_address="0.0.0.0", config_path=None, enable_web_config=True):
+def start_health_service(port=52500, bind_address="0.0.0.0", config_path=None, enable_web_config=False):
     """
     Start the global health check service.
 
@@ -276,7 +276,7 @@ def start_health_service(port=52500, bind_address="0.0.0.0", config_path=None, e
         port (int): Port to bind to (default: 52500)
         bind_address (str): Address to bind to (default: '0.0.0.0')
         config_path (str | None): Path to config.ini for the web editor
-        enable_web_config (bool): Whether to enable the web config editor (default: True)
+        enable_web_config (bool): Whether to enable the web config editor (default: False)
 
     Returns:
         bool: True if started successfully, False otherwise
