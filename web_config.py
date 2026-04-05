@@ -556,27 +556,113 @@ def read_config_as_dict(config_path: str) -> Tuple[Dict, list]:
 
 def write_config_from_dict(config_path: str, sections: Dict, order: list) -> None:
     """
-    Write config.ini from the provided sections dict, preserving section order.
+    Write config.ini from the provided sections dict, preserving existing comments.
 
-    ``sections`` is a dict mapping section names to dicts of key->value.
-    ``order`` is a list of section names in the desired order; any sections
-    not present in ``order`` are appended afterwards.
+    If *config_path* already exists, comment lines (``#`` / ``;``) and blank
+    lines are kept in their original positions while key values are updated
+    in-place.  Keys absent from *sections* are removed; keys that are new are
+    appended at the end of their section.  Sections absent from *sections* are
+    dropped.  If the file does not yet exist it is written from scratch.
+
+    ``sections`` maps section names to dicts of key->value.
+    ``order`` controls the section order; sections not listed are appended last.
     """
-    cfg = configparser.RawConfigParser(dict_type=OrderedDict)
-    cfg.optionxform = str  # preserve key case
-
-    # Build final write order: listed sections first, then any unlisted ones
     write_order = list(order) + [s for s in sections if s not in order]
+
+    if not os.path.exists(config_path):
+        lines: list = []
+        for section in write_order:
+            if section not in sections:
+                continue
+            lines.append(f"[{section}]\n")
+            for key, value in sections[section].items():
+                lines.append(f"{key} = {value}\n")
+            lines.append("\n")
+        with open(config_path, "w") as f:
+            f.writelines(lines)
+        return
+
+    with open(config_path, "r") as f:
+        original_lines = f.readlines()
+
+    # Split the original file into a preamble (lines before the first section
+    # header) and a list of [section_name, raw_lines] pairs.
+    pre_lines: list = []
+    parsed_sections: list = []  # list of [name, [raw lines including header]]
+    cur_name = None
+    cur_lines: list = []
+
+    for line in original_lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and "]" in stripped:
+            name = stripped[1:stripped.index("]")]
+            if cur_name is not None:
+                parsed_sections.append([cur_name, cur_lines])
+            else:
+                pre_lines = cur_lines
+            cur_name = name
+            cur_lines = [line]
+        else:
+            cur_lines.append(line)
+    if cur_name is not None:
+        parsed_sections.append([cur_name, cur_lines])
+    elif cur_lines:
+        pre_lines = cur_lines
+
+    orig_section_lines = {name: sec_lines for name, sec_lines in parsed_sections}
+
+    def _update_section(orig_sec_lines: list, new_pairs: Dict) -> list:
+        """Return updated raw lines for one section, preserving comments."""
+        result = [orig_sec_lines[0]]  # section header line
+        written: set = set()
+        pending: list = []  # buffered comment/blank lines preceding a key
+
+        for line in orig_sec_lines[1:]:
+            stripped = line.strip()
+            if stripped == "" or stripped.startswith("#") or stripped.startswith(";"):
+                pending.append(line)
+            elif "=" in stripped:
+                key = stripped.split("=", 1)[0].strip()
+                if key in new_pairs:
+                    result.extend(pending)
+                    pending = []
+                    result.append(f"{key} = {new_pairs[key]}\n")
+                    written.add(key)
+                else:
+                    # Key was deleted – discard its associated comments too
+                    pending = []
+            else:
+                result.extend(pending)
+                pending = []
+                result.append(line)
+
+        result.extend(pending)  # trailing blank/comment lines at section end
+
+        # Append brand-new keys not present in the original section
+        for key, value in new_pairs.items():
+            if key not in written:
+                result.append(f"{key} = {value}\n")
+
+        return result
+
+    output_lines = list(pre_lines)
 
     for section in write_order:
         if section not in sections:
             continue
-        cfg.add_section(section)
-        for key, value in sections[section].items():
-            cfg.set(section, key, value)
+        if section in orig_section_lines:
+            output_lines.extend(_update_section(orig_section_lines[section], sections[section]))
+        else:
+            # Entirely new section
+            if output_lines and output_lines[-1].strip():
+                output_lines.append("\n")
+            output_lines.append(f"[{section}]\n")
+            for key, value in sections[section].items():
+                output_lines.append(f"{key} = {value}\n")
+            output_lines.append("\n")
 
     with open(config_path, "w") as f:
-        cfg.write(f)
+        f.writelines(output_lines)
 
 
 def config_to_json(config_path: str) -> str:
