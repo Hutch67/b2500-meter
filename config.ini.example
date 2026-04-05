@@ -62,12 +62,6 @@ DEADBAND_WATTS = 0
 # Example: HOLD_TIME = 5  (hold each reported value for at least 5 seconds)
 # Can be overridden per powermeter section
 HOLD_TIME = 0
-# Per-phase dead-band for CT001 phase summing (in watts, ct001 only)
-# Applied to each individual phase BEFORE phases are summed into a single value.
-# Useful when per-phase fluctuations cancel each other and cause the summed value to oscillate.
-# Set to 0 to disable (default)
-# Example: PER_PHASE_DEADBAND_WATTS = 30
-PER_PHASE_DEADBAND_WATTS = 0
 
 #[SHELLY]
 #TYPE = 1PM #PLUS1PM #EM #3EM #3EMPRO
