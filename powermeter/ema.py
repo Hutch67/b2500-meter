@@ -98,7 +98,10 @@ class ExponentialMovingAveragePowermeter(Powermeter):
         if self._ema_interval > 0:
             # Background-thread mode: wait for the first reading if needed,
             # then return the cached EMA without touching the underlying source.
-            self._first_reading_event.wait()
+            # Use a polling loop with a finite timeout so transient errors in
+            # the background thread don't cause this method to block forever.
+            while not self._first_reading_event.wait(timeout=1.0):
+                pass
             with self._lock:
                 return list(self.ema_values)  # type: ignore[arg-type]
 
