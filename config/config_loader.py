@@ -69,6 +69,7 @@ def read_all_powermeter_configs(
         "GENERAL", "THROTTLE_INTERVAL", fallback=0.0
     )
     global_ema_alpha = config.getfloat("GENERAL", "EMA_ALPHA", fallback=0.0)
+    global_ema_interval = config.getfloat("GENERAL", "EMA_INTERVAL", fallback=0.0)
     global_slew_rate = config.getfloat(
         "GENERAL", "SLEW_RATE_WATTS_PER_SEC", fallback=0.0
     )
@@ -107,11 +108,25 @@ def read_all_powermeter_configs(
                     if config.has_option(section, "EMA_ALPHA")
                     else "global"
                 )
-                print(
-                    f"Applying {ema_source} EMA smoothing (alpha={section_ema_alpha}) to {section}"
+                section_ema_interval = config.getfloat(
+                    section, "EMA_INTERVAL", fallback=global_ema_interval
                 )
+                if section_ema_interval > 0:
+                    ema_interval_source = (
+                        "section-specific"
+                        if config.has_option(section, "EMA_INTERVAL")
+                        else "global"
+                    )
+                    print(
+                        f"Applying {ema_source} EMA smoothing (alpha={section_ema_alpha}, "
+                        f"{ema_interval_source} interval={section_ema_interval}s) to {section}"
+                    )
+                else:
+                    print(
+                        f"Applying {ema_source} EMA smoothing (alpha={section_ema_alpha}) to {section}"
+                    )
                 powermeter = ExponentialMovingAveragePowermeter(
-                    powermeter, alpha=section_ema_alpha
+                    powermeter, alpha=section_ema_alpha, ema_interval=section_ema_interval
                 )
 
             section_slew_rate = config.getfloat(

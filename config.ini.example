@@ -26,6 +26,14 @@ THROTTLE_INTERVAL = 0
 # Recommended values: 0.1 (heavy) to 0.5 (moderate) smoothing
 # Can be overridden per powermeter section
 EMA_ALPHA = 0
+# Global EMA sampling interval (in seconds) - decouples EMA accumulation from the B2500 poll rate
+# When set > 0, a background thread samples the underlying powermeter at this interval and updates
+# the EMA continuously, independently of how often the B2500 requests data. This lets the EMA
+# accumulate many samples between B2500 polls, making it more effective at smoothing rapid spikes.
+# When set to 0 (default), the EMA is updated on every get_powermeter_watts() call (original behaviour).
+# Example: EMA_INTERVAL = 1  (sample every 1 second regardless of B2500 poll rate)
+# Can be overridden per powermeter section
+EMA_INTERVAL = 0
 # Global power offset (in watts) - added to all power readings from all powermeters unless overridden
 # Useful to compensate for a known systematic measurement error or to factor in a constant baseline load
 # Positive values increase the reported power; negative values decrease it
@@ -72,7 +80,8 @@ PER_PHASE_DEADBAND_WATTS = 0
 #THROTTLE_INTERVAL = 0
 ## Per-powermeter EMA smoothing override (optional, range (0, 1])
 #EMA_ALPHA = 0
-## Per-powermeter slew-rate limiter override in watts per second (optional)
+## Per-powermeter EMA sampling interval override in seconds (optional)
+#EMA_INTERVAL = 0
 #SLEW_RATE_WATTS_PER_SEC = 0
 ## Per-powermeter dead-band filter override in watts (optional)
 #DEADBAND_WATTS = 0
