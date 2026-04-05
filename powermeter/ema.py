@@ -1,6 +1,7 @@
 import threading
 import time
 from typing import List, Optional
+from config.logger import logger
 from .base import Powermeter
 
 
@@ -84,8 +85,8 @@ class ExponentialMovingAveragePowermeter(Powermeter):
                 with self._lock:
                     self._apply_ema(raw_values)
                 self._first_reading_event.set()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"EMA background thread failed to read powermeter: {e}")
             elapsed = time.monotonic() - start
             sleep_time = max(0.0, self._ema_interval - elapsed)
             time.sleep(sleep_time)
@@ -98,10 +99,16 @@ class ExponentialMovingAveragePowermeter(Powermeter):
         if self._ema_interval > 0:
             # Background-thread mode: wait for the first reading if needed,
             # then return the cached EMA without touching the underlying source.
-            # Use a polling loop with a finite timeout so transient errors in
-            # the background thread don't cause this method to block forever.
+            # Use a finite timeout per iteration so we can log a warning if
+            # the first reading is taking unexpectedly long (e.g. network error).
+            waited = 0.0
             while not self._first_reading_event.wait(timeout=1.0):
-                pass
+                waited += 1.0
+                if waited % 30.0 == 0:
+                    logger.warning(
+                        f"EMA background thread has not produced a reading after "
+                        f"{waited:.0f}s; still waiting..."
+                    )
             with self._lock:
                 return list(self.ema_values)  # type: ignore[arg-type]
 
