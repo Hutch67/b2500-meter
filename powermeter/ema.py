@@ -104,7 +104,7 @@ class ExponentialMovingAveragePowermeter(Powermeter):
             waited = 0.0
             while not self._first_reading_event.wait(timeout=1.0):
                 waited += 1.0
-                if waited > 0 and waited % 30.0 == 0:
+                if waited % 30.0 == 0:
                     logger.warning(
                         f"EMA background thread has not produced a reading after "
                         f"{waited:.0f}s; still waiting..."
