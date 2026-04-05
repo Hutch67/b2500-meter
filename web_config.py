@@ -203,7 +203,38 @@ td.action-cell { width: 36px; text-align: center; }
 .status-bar.success { background: #27ae60; }
 .status-bar.error { background: #c0392b; }
 .status-bar.visible { opacity: 1; pointer-events: auto; }
-.loading { text-align: center; padding: 3rem; color: #aaa; font-size: 1rem; }
+.btn-save-restart {
+  background: #e67e22;
+  color: #fff;
+  font-weight: 700;
+  font-size: .95rem;
+  padding: .5rem 1.5rem;
+  border-radius: 8px;
+}
+.btn-save-restart:disabled { opacity: .5; cursor: not-allowed; }
+.overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(22, 33, 62, 0.92);
+  z-index: 999;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  gap: 1rem;
+}
+.overlay.visible { display: flex; }
+.overlay h2 { font-size: 1.5rem; margin: 0; }
+.overlay p { font-size: 1rem; opacity: .75; margin: 0; }
+.spinner {
+  width: 48px; height: 48px;
+  border: 4px solid rgba(255,255,255,.2);
+  border-top-color: #4ecca3;
+  border-radius: 50%;
+  animation: spin .9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -222,6 +253,7 @@ td.action-cell { width: 36px; text-align: center; }
   <div class="toolbar">
     <button class="btn btn-add-section" onclick="addSection()">&#43; Add Section</button>
     <button id="save-btn" class="btn btn-save" onclick="saveConfig()">&#128190; Save Configuration</button>
+    <button id="save-restart-btn" class="btn btn-save-restart" onclick="saveAndRestart()">&#9654; Save &amp; Restart</button>
   </div>
 
   <div id="config-container">
@@ -229,6 +261,11 @@ td.action-cell { width: 36px; text-align: center; }
   </div>
 </main>
 <div id="status-bar" class="status-bar"></div>
+<div id="restart-overlay" class="overlay">
+  <div class="spinner"></div>
+  <h2>Restarting service&hellip;</h2>
+  <p id="reconnect-msg">Reconnecting in <span id="reconnect-countdown">20</span>s</p>
+</div>
 
 <script>
 /* ===== State ===== */
@@ -397,6 +434,79 @@ async function saveConfig() {
     saveBtn.disabled = false;
     saveBtn.textContent = '\uD83D\uDCBE Save Configuration';
   }
+}
+
+/* ===== Save & Restart ===== */
+async function saveAndRestart() {
+  const saveRestartBtn = document.getElementById('save-restart-btn');
+  const saveBtn = document.getElementById('save-btn');
+  saveRestartBtn.disabled = true;
+  saveBtn.disabled = true;
+  saveRestartBtn.textContent = 'Saving\u2026';
+  try {
+    // Step 1: save config
+    const payload = collectConfig();
+    const saveResp = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const saveData = await saveResp.json();
+    if (!saveResp.ok || !saveData.success) {
+      showStatus('Error saving: ' + (saveData.error || 'Unknown error'), 'error');
+      saveRestartBtn.disabled = false;
+      saveBtn.disabled = false;
+      saveRestartBtn.textContent = '\u25B6 Save & Restart';
+      return;
+    }
+
+    // Step 2: trigger restart
+    saveRestartBtn.textContent = 'Restarting\u2026';
+    try {
+      await fetch('/api/restart', { method: 'POST' });
+    } catch (_) {
+      // Connection drop is expected as the service restarts
+    }
+
+    // Step 3: show overlay and poll until the service is back
+    showRestartOverlay();
+  } catch (e) {
+    showStatus('Failed: ' + e.message, 'error');
+    saveRestartBtn.disabled = false;
+    saveBtn.disabled = false;
+    saveRestartBtn.textContent = '\u25B6 Save & Restart';
+  }
+}
+
+function showRestartOverlay() {
+  const overlay = document.getElementById('restart-overlay');
+  overlay.classList.add('visible');
+  let remaining = 20;
+  document.getElementById('reconnect-countdown').textContent = remaining;
+
+  const ticker = setInterval(() => {
+    remaining -= 1;
+    document.getElementById('reconnect-countdown').textContent = remaining;
+  }, 1000);
+
+  // Poll /health until it responds, then reload
+  const poll = setInterval(async () => {
+    try {
+      const r = await fetch('/health', { cache: 'no-store' });
+      if (r.ok) {
+        clearInterval(poll);
+        clearInterval(ticker);
+        window.location.reload();
+      }
+    } catch (_) { /* still restarting */ }
+  }, 1500);
+
+  // Safety: reload after 30 s even if polling hasn't confirmed yet
+  setTimeout(() => {
+    clearInterval(poll);
+    clearInterval(ticker);
+    window.location.reload();
+  }, 30000);
 }
 
 /* ===== Utilities ===== */

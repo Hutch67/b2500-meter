@@ -8,6 +8,8 @@ Also serves a web-based configuration editor at /config.
 """
 
 import json
+import os
+import signal
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -96,6 +98,15 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 logger.error(f"Error saving config: {e}")
                 self._json_response(500, {"error": str(e)})
+
+        elif normalized_path == "/api/restart":
+            self._json_response(200, {"success": True, "message": "Service is restarting..."})
+            logger.info("Restart requested via web UI")
+            # Send SIGTERM after a short delay so the HTTP response is flushed first.
+            # Docker (restart: unless-stopped) will restart the container automatically.
+            _RESTART_DELAY_SECONDS = 0.5
+            threading.Timer(_RESTART_DELAY_SECONDS, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
+
         else:
             self._json_response(404, {"error": "Not Found"})
 
