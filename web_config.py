@@ -1,0 +1,475 @@
+"""
+Web-based configuration editor for B2500 Meter.
+
+Provides helpers and an HTML page for reading and editing config.ini via a browser.
+"""
+
+import configparser
+import json
+import os
+from collections import OrderedDict
+from typing import Dict, Tuple
+
+CONFIG_EDITOR_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>B2500 Meter &ndash; Configuration Editor</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #f0f2f5;
+  color: #1a1a2e;
+  margin: 0;
+  min-height: 100vh;
+}
+header {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  color: #fff;
+  padding: 1rem 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,.3);
+}
+header h1 { font-size: 1.25rem; font-weight: 600; margin: 0; }
+header .subtitle { font-size: 0.8rem; opacity: .7; margin: 0; }
+main {
+  max-width: 900px;
+  margin: 1.5rem auto;
+  padding: 0 1rem 4rem;
+}
+.banner {
+  display: none;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 8px;
+  padding: .75rem 1rem;
+  margin-bottom: 1rem;
+  font-size: .875rem;
+  color: #856404;
+}
+.banner.visible { display: flex; align-items: center; gap: .5rem; }
+.section-card {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.1);
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+.section-header {
+  display: flex;
+  align-items: center;
+  padding: .6rem 1rem;
+  background: #16213e;
+  color: #fff;
+  cursor: pointer;
+  user-select: none;
+  gap: .5rem;
+}
+.section-header h2 {
+  font-size: .95rem;
+  font-weight: 600;
+  margin: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+.section-header h2 input {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(255,255,255,.4);
+  color: #fff;
+  font-size: .95rem;
+  font-weight: 600;
+  width: auto;
+  min-width: 120px;
+  padding: 0 2px;
+  outline: none;
+}
+.section-header h2 input:focus { border-bottom-color: #4ecca3; }
+.section-header .chevron {
+  transition: transform .2s;
+  font-size: .75rem;
+}
+.section-header.collapsed .chevron { transform: rotate(-90deg); }
+.section-body {
+  padding: .5rem 0;
+}
+.section-body.hidden { display: none; }
+table { width: 100%; border-collapse: collapse; }
+th, td {
+  padding: .45rem .9rem;
+  text-align: left;
+  font-size: .875rem;
+}
+th {
+  color: #888;
+  font-weight: 500;
+  font-size: .75rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  border-bottom: 1px solid #f0f0f0;
+}
+tr:not(:last-child) td { border-bottom: 1px solid #f8f8f8; }
+tr:hover td { background: #fafbff; }
+td.key-cell { width: 35%; }
+td.key-cell input, td.val-cell input {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: .35rem .5rem;
+  font-size: .875rem;
+  background: transparent;
+  color: #1a1a2e;
+  transition: border-color .15s, background .15s;
+}
+td.key-cell input:hover, td.val-cell input:hover { border-color: #ddd; background: #f9f9f9; }
+td.key-cell input:focus, td.val-cell input:focus {
+  border-color: #4ecca3;
+  background: #fff;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(78,204,163,.15);
+}
+td.action-cell { width: 36px; text-align: center; }
+.btn-icon {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: .25rem;
+  border-radius: 4px;
+  color: #aaa;
+  font-size: 1rem;
+  line-height: 1;
+  transition: color .15s, background .15s;
+}
+.btn-icon:hover { color: #e74c3c; background: #fdf0f0; }
+.section-footer {
+  padding: .4rem .9rem;
+  border-top: 1px solid #f4f4f4;
+  display: flex;
+  gap: .5rem;
+}
+.btn {
+  border: none;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: .8rem;
+  font-weight: 500;
+  padding: .35rem .75rem;
+  transition: opacity .15s, transform .1s;
+}
+.btn:hover { opacity: .88; }
+.btn:active { transform: scale(.97); }
+.btn-add-key { background: #eaf6f0; color: #27ae60; }
+.btn-remove-section { background: #fdecea; color: #c0392b; margin-left: auto; }
+.toolbar {
+  display: flex;
+  gap: .75rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.btn-add-section { background: #e8f4fd; color: #2980b9; }
+.btn-save {
+  background: #4ecca3;
+  color: #1a1a2e;
+  font-weight: 700;
+  font-size: .95rem;
+  padding: .5rem 1.5rem;
+  border-radius: 8px;
+  margin-left: auto;
+}
+.btn-save:disabled { opacity: .5; cursor: not-allowed; }
+.status-bar {
+  position: fixed;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #222;
+  color: #fff;
+  border-radius: 8px;
+  padding: .6rem 1.2rem;
+  font-size: .875rem;
+  box-shadow: 0 4px 16px rgba(0,0,0,.25);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .3s;
+  white-space: nowrap;
+}
+.status-bar.success { background: #27ae60; }
+.status-bar.error { background: #c0392b; }
+.status-bar.visible { opacity: 1; pointer-events: auto; }
+.loading { text-align: center; padding: 3rem; color: #aaa; font-size: 1rem; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>&#9889; B2500 Meter &ndash; Configuration Editor</h1>
+    <p class="subtitle">Edit and save your config.ini settings</p>
+  </div>
+</header>
+<main>
+  <div id="restart-banner" class="banner">
+    <span>&#9888;&#65039;</span>
+    <span>Configuration saved. <strong>Restart the service</strong> to apply the changes.</span>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn btn-add-section" onclick="addSection()">&#43; Add Section</button>
+    <button id="save-btn" class="btn btn-save" onclick="saveConfig()">&#128190; Save Configuration</button>
+  </div>
+
+  <div id="config-container">
+    <p class="loading">Loading configuration&hellip;</p>
+  </div>
+</main>
+<div id="status-bar" class="status-bar"></div>
+
+<script>
+/* ===== State ===== */
+let currentConfig = {};   // { sectionName: { key: value, ... }, ... }
+let sectionOrder = [];    // preserve section order
+
+/* ===== Boot ===== */
+async function loadConfig() {
+  try {
+    const resp = await fetch('/api/config');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    currentConfig = data.sections || {};
+    sectionOrder = data.order || Object.keys(currentConfig);
+    renderAll();
+  } catch (e) {
+    document.getElementById('config-container').innerHTML =
+      '<p class="loading" style="color:#c0392b">&#10060; Failed to load configuration: ' + e.message + '</p>';
+  }
+}
+
+/* ===== Rendering ===== */
+function renderAll() {
+  const container = document.getElementById('config-container');
+  container.innerHTML = '';
+  sectionOrder.forEach(sec => {
+    container.appendChild(renderSection(sec, currentConfig[sec] || {}));
+  });
+}
+
+function renderSection(sectionName, pairs) {
+  const card = document.createElement('div');
+  card.className = 'section-card';
+  card.dataset.section = sectionName;
+
+  // Header
+  const header = document.createElement('div');
+  header.className = 'section-header';
+  header.innerHTML = `
+    <h2>
+      <span style="opacity:.6;font-size:.8rem">[</span>
+      <input type="text" class="section-name-input" value="${esc(sectionName)}" title="Section name">
+      <span style="opacity:.6;font-size:.8rem">]</span>
+    </h2>
+    <span class="chevron">&#9660;</span>`;
+  header.addEventListener('click', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    header.classList.toggle('collapsed');
+    card.querySelector('.section-body').classList.toggle('hidden');
+  });
+
+  // Body
+  const body = document.createElement('div');
+  body.className = 'section-body';
+  const table = document.createElement('table');
+  table.innerHTML = '<thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>';
+  const tbody = document.createElement('tbody');
+  tbody.className = 'key-value-body';
+  Object.entries(pairs).forEach(([k, v]) => {
+    tbody.appendChild(renderRow(k, v));
+  });
+  table.appendChild(tbody);
+  body.appendChild(table);
+
+  // Footer
+  const footer = document.createElement('div');
+  footer.className = 'section-footer';
+  footer.innerHTML = `
+    <button class="btn btn-add-key" onclick="addKey(this)">&#43; Add Key</button>
+    <button class="btn btn-remove-section" onclick="removeSection(this)">&#128465; Remove Section</button>`;
+
+  card.appendChild(header);
+  card.appendChild(body);
+  card.appendChild(footer);
+  return card;
+}
+
+function renderRow(key, value) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td class="key-cell"><input type="text" class="key-input" value="${esc(key)}" placeholder="KEY"></td>
+    <td class="val-cell"><input type="text" class="val-input" value="${esc(value)}" placeholder="value"></td>
+    <td class="action-cell"><button class="btn-icon" title="Remove key" onclick="removeRow(this)">&#215;</button></td>`;
+  return tr;
+}
+
+/* ===== Actions ===== */
+function addSection() {
+  const sectionName = 'NEW_SECTION';
+  let name = sectionName;
+  let i = 1;
+  while (sectionOrder.includes(name)) { name = sectionName + '_' + (i++); }
+  sectionOrder.push(name);
+  currentConfig[name] = {};
+  const container = document.getElementById('config-container');
+  container.appendChild(renderSection(name, {}));
+  // Focus the section name input
+  const lastCard = container.lastElementChild;
+  const input = lastCard.querySelector('.section-name-input');
+  input.select();
+  input.focus();
+}
+
+function addKey(btn) {
+  const card = btn.closest('.section-card');
+  const tbody = card.querySelector('.key-value-body');
+  tbody.appendChild(renderRow('', ''));
+  tbody.lastElementChild.querySelector('.key-input').focus();
+}
+
+function removeRow(btn) {
+  btn.closest('tr').remove();
+}
+
+function removeSection(btn) {
+  const card = btn.closest('.section-card');
+  const name = card.dataset.section;
+  if (!confirm('Remove section [' + name + '] and all its keys?')) return;
+  card.remove();
+  sectionOrder = sectionOrder.filter(s => s !== name);
+  delete currentConfig[name];
+}
+
+/* ===== Collect data from DOM ===== */
+function collectConfig() {
+  const result = {};
+  const order = [];
+  document.querySelectorAll('.section-card').forEach(card => {
+    const nameInput = card.querySelector('.section-name-input');
+    const sectionName = nameInput.value.trim();
+    if (!sectionName) return;
+    const pairs = {};
+    card.querySelectorAll('.key-value-body tr').forEach(tr => {
+      const key = tr.querySelector('.key-input').value.trim();
+      const val = tr.querySelector('.val-input').value.trim();
+      if (key) pairs[key] = val;
+    });
+    result[sectionName] = pairs;
+    order.push(sectionName);
+  });
+  return { sections: result, order };
+}
+
+/* ===== Save ===== */
+async function saveConfig() {
+  const saveBtn = document.getElementById('save-btn');
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving\u2026';
+  try {
+    const payload = collectConfig();
+    const resp = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await resp.json();
+    if (resp.ok && data.success) {
+      showStatus('Configuration saved successfully!', 'success');
+      document.getElementById('restart-banner').classList.add('visible');
+    } else {
+      showStatus('Error: ' + (data.error || 'Unknown error'), 'error');
+    }
+  } catch (e) {
+    showStatus('Failed to save: ' + e.message, 'error');
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = '\uD83D\uDCBE Save Configuration';
+  }
+}
+
+/* ===== Utilities ===== */
+function esc(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+let statusTimer = null;
+function showStatus(msg, type) {
+  const bar = document.getElementById('status-bar');
+  bar.textContent = msg;
+  bar.className = 'status-bar visible ' + (type || '');
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => { bar.className = 'status-bar'; }, 4000);
+}
+
+/* ===== Init ===== */
+loadConfig();
+</script>
+</body>
+</html>
+"""
+
+
+def read_config_as_dict(config_path: str) -> Tuple[Dict, list]:
+    """
+    Read config.ini and return (sections_dict, ordered_section_list).
+
+    The sections_dict maps section names to dicts of key->value.
+    Case of keys is preserved.
+    """
+    cfg = configparser.RawConfigParser(dict_type=OrderedDict)
+    cfg.optionxform = str  # preserve key case
+    if os.path.exists(config_path):
+        cfg.read(config_path)
+    sections: Dict[str, Dict[str, str]] = {}
+    order = []
+    for section in cfg.sections():
+        sections[section] = dict(cfg.items(section))
+        order.append(section)
+    return sections, order
+
+
+def write_config_from_dict(config_path: str, sections: Dict, order: list) -> None:
+    """
+    Write config.ini from the provided sections dict, preserving section order.
+
+    ``sections`` is a dict mapping section names to dicts of key->value.
+    ``order`` is a list of section names in the desired order; any sections
+    not present in ``order`` are appended afterwards.
+    """
+    cfg = configparser.RawConfigParser(dict_type=OrderedDict)
+    cfg.optionxform = str  # preserve key case
+
+    # Build final write order: listed sections first, then any unlisted ones
+    write_order = list(order) + [s for s in sections if s not in order]
+
+    for section in write_order:
+        if section not in sections:
+            continue
+        cfg.add_section(section)
+        for key, value in sections[section].items():
+            cfg.set(section, key, value)
+
+    with open(config_path, "w") as f:
+        cfg.write(f)
+
+
+def config_to_json(config_path: str) -> str:
+    """Return the config as a JSON string suitable for the web UI."""
+    sections, order = read_config_as_dict(config_path)
+    return json.dumps({"sections": sections, "order": order})

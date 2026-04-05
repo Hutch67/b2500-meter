@@ -228,7 +228,7 @@ def main():
     # Start health check server for watchdog monitoring
     if cfg.getboolean("GENERAL", "ENABLE_HEALTH_CHECK", fallback=True):
         logger.info("Starting health check service...")
-        if start_health_service():
+        if start_health_service(config_path=args.config):
             logger.info("Health check service started successfully")
         else:
             logger.error("Failed to start health check service")
