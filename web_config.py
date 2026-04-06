@@ -392,7 +392,7 @@ function makeValueInput(key, value) {
       sel.className = 'val-input';
       const lower = String(value).toLowerCase();
       const boolOptions = ['True', 'False'];
-      const normalised = ['true', 'yes', '1'].includes(lower) ? boolOptions[0] : boolOptions[1];
+      const normalised = ['true', 'yes', 'on', '1'].includes(lower) ? boolOptions[0] : boolOptions[1];
       boolOptions.forEach(opt => {
         const o = document.createElement('option');
         o.value = opt;
@@ -453,7 +453,7 @@ function makeValueInput(key, value) {
       sel.className = 'val-input';
       const lower = String(value).toLowerCase();
       const hasMatch = info.options.some(o => o.toLowerCase() === lower);
-      if (value && !hasMatch) {
+      if (value !== '' && !hasMatch) {
         // Preserve an unknown current value as a custom option
         const o = document.createElement('option');
         o.value = value;
