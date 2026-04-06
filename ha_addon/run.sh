@@ -17,7 +17,7 @@ wait_for_homeassistant() {
            -H "Content-Type: application/json" \
            --connect-timeout 5 --max-time 10 \
            "$ha_url" > /dev/null 2>&1; then
-            bashio::log.info "Home Assistant is ready! Proceeding with B2500 Meter startup..."
+            bashio::log.info "Home Assistant is ready! Proceeding with AstraMeter startup..."
             return 0
         fi
         
@@ -42,7 +42,7 @@ print_redacted_config() {
 if bashio::config.has_value 'custom_config' && [ -f "/config/$(bashio::config 'custom_config')" ]; then
     bashio::log.info "Using custom config file: $(bashio::config 'custom_config')"
     if bashio::config.has_value 'marstek_mailbox' || bashio::config.has_value 'marstek_password' || bashio::config.has_value 'marstek_auto_register_ct_device'; then
-        bashio::log.warning "Add-on UI Marstek settings are ignored when custom_config is used; values from custom config file take precedence"
+        bashio::log.warning "App UI Marstek settings are ignored when custom_config is used; values from custom config file take precedence"
     fi
     cp "/config/$(bashio::config 'custom_config')" "$CONFIG"
 else
@@ -154,5 +154,5 @@ cd /app
 
 # Get log level from configuration (defaults to info)
 LOG_LEVEL=$(bashio::config 'log_level')
-bashio::log.info "Starting B2500 Meter with log level: $LOG_LEVEL"
-b2500-meter --loglevel "$LOG_LEVEL"
+bashio::log.info "Starting AstraMeter with log level: $LOG_LEVEL"
+astrameter --loglevel "$LOG_LEVEL"
