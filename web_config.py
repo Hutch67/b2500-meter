@@ -117,7 +117,7 @@ th {
 tr:not(:last-child) td { border-bottom: 1px solid #f8f8f8; }
 tr:hover td { background: #fafbff; }
 td.key-cell { width: 35%; }
-td.key-cell input, td.val-cell input {
+td.key-cell input, td.val-cell input, td.val-cell select {
   width: 100%;
   border: 1px solid transparent;
   border-radius: 5px;
@@ -127,13 +127,14 @@ td.key-cell input, td.val-cell input {
   color: #1a1a2e;
   transition: border-color .15s, background .15s;
 }
-td.key-cell input:hover, td.val-cell input:hover { border-color: #ddd; background: #f9f9f9; }
-td.key-cell input:focus, td.val-cell input:focus {
+td.key-cell input:hover, td.val-cell input:hover, td.val-cell select:hover { border-color: #ddd; background: #f9f9f9; }
+td.key-cell input:focus, td.val-cell input:focus, td.val-cell select:focus {
   border-color: #4ecca3;
   background: #fff;
   outline: none;
   box-shadow: 0 0 0 3px rgba(78,204,163,.15);
 }
+td.val-cell select { cursor: pointer; appearance: auto; }
 td.action-cell { width: 36px; text-align: center; }
 .btn-icon {
   background: none;
@@ -343,12 +344,180 @@ function renderSection(sectionName, pairs) {
   return card;
 }
 
+/* ===== Key-type metadata ===== */
+const KEY_TYPES = {
+  // Booleans
+  SKIP_POWERMETER_TEST:    { type: 'boolean' },
+  WEB_CONFIG_ENABLED:      { type: 'boolean' },
+  ENABLE_HEALTH_CHECK:     { type: 'boolean' },
+  DISABLE_SUM_PHASES:      { type: 'boolean' },
+  DISABLE_ABSOLUTE_VALUES: { type: 'boolean' },
+  HTTPS:                   { type: 'boolean' },
+  POWER_CALCULATE:         { type: 'boolean' },
+  JSON_POWER_CALCULATE:    { type: 'boolean' },
+  // Integers
+  POLL_INTERVAL:           { type: 'integer' },
+  PORT:                    { type: 'integer' },
+  UNIT_ID:                 { type: 'integer' },
+  ADDRESS:                 { type: 'integer' },
+  COUNT:                   { type: 'integer' },
+  // Floats
+  THROTTLE_INTERVAL:       { type: 'float' },
+  EMA_ALPHA:               { type: 'float', min: 0, max: 1 },
+  EMA_INTERVAL:            { type: 'float' },
+  POWER_OFFSET:            { type: 'float' },
+  SLEW_RATE_WATTS_PER_SEC: { type: 'float' },
+  DEADBAND_WATTS:          { type: 'float' },
+  HOLD_TIME:               { type: 'float' },
+  TIMEOUT:                 { type: 'float' },
+  // Passwords
+  PASS:                    { type: 'password' },
+  PASSWORD:                { type: 'password' },
+  ACCESSTOKEN:             { type: 'password' },
+  // Enums
+  TYPE:                    { type: 'select', options: ['1PM', 'PLUS1PM', 'EM', '3EM', '3EMPro'] },
+  DEVICE_TYPE:             { type: 'select', options: ['ct001', 'shellypro3em', 'shellyemg3', 'shellyproem50'] },
+  DATA_TYPE:               { type: 'select', options: ['UINT16', 'INT16', 'UINT32', 'INT32', 'FLOAT32', 'FLOAT64'] },
+  BYTE_ORDER:              { type: 'select', options: ['BIG', 'LITTLE'] },
+  WORD_ORDER:              { type: 'select', options: ['BIG', 'LITTLE'] },
+  REGISTER_TYPE:           { type: 'select', options: ['HOLDING', 'INPUT'] },
+};
+
+function makeValueInput(key, value) {
+  const info = KEY_TYPES[(key || '').toUpperCase()] || {};
+  switch (info.type) {
+
+    case 'boolean': {
+      const sel = document.createElement('select');
+      sel.className = 'val-input';
+      const lower = String(value).toLowerCase();
+      const boolOptions = ['True', 'False'];
+      const normalised = ['true', 'yes', 'on', '1'].includes(lower) ? boolOptions[0] : boolOptions[1];
+      boolOptions.forEach(opt => {
+        const o = document.createElement('option');
+        o.value = opt;
+        o.textContent = opt;
+        if (opt === normalised) o.selected = true;
+        sel.appendChild(o);
+      });
+      return sel;
+    }
+
+    case 'integer': {
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.step = '1';
+      inp.className = 'val-input';
+      inp.value = value;
+      inp.placeholder = '0';
+      return inp;
+    }
+
+    case 'float': {
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.step = 'any';
+      inp.className = 'val-input';
+      inp.value = value;
+      inp.placeholder = '0';
+      if (info.min !== undefined) inp.min = info.min;
+      if (info.max !== undefined) inp.max = info.max;
+      return inp;
+    }
+
+    case 'password': {
+      const wrapper = document.createElement('span');
+      wrapper.style.cssText = 'display:flex;align-items:center;gap:4px;width:100%';
+      const inp = document.createElement('input');
+      inp.type = 'password';
+      inp.className = 'val-input';
+      inp.value = value;
+      inp.autocomplete = 'off';
+      inp.style.flex = '1';
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'btn-icon';
+      toggle.title = 'Show / hide';
+      toggle.style.cssText = 'flex-shrink:0;font-size:.85rem;color:#aaa';
+      toggle.textContent = '\uD83D\uDC41';
+      toggle.addEventListener('click', () => {
+        inp.type = inp.type === 'password' ? 'text' : 'password';
+      });
+      wrapper.appendChild(inp);
+      wrapper.appendChild(toggle);
+      return wrapper;
+    }
+
+    case 'select': {
+      const sel = document.createElement('select');
+      sel.className = 'val-input';
+      const lower = String(value).toLowerCase();
+      const hasMatch = info.options.some(o => o.toLowerCase() === lower);
+      if (value !== '' && !hasMatch) {
+        // Preserve an unknown current value as a custom option
+        const o = document.createElement('option');
+        o.value = value;
+        o.textContent = value;
+        o.selected = true;
+        sel.appendChild(o);
+      }
+      info.options.forEach(opt => {
+        const o = document.createElement('option');
+        o.value = opt;
+        o.textContent = opt;
+        if (opt.toLowerCase() === lower) o.selected = true;
+        sel.appendChild(o);
+      });
+      return sel;
+    }
+
+    default: {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.className = 'val-input';
+      inp.value = value;
+      inp.placeholder = 'value';
+      return inp;
+    }
+  }
+}
+
 function renderRow(key, value) {
   const tr = document.createElement('tr');
-  tr.innerHTML = `
-    <td class="key-cell"><input type="text" class="key-input" value="${esc(key)}" placeholder="KEY"></td>
-    <td class="val-cell"><input type="text" class="val-input" value="${esc(value)}" placeholder="value"></td>
-    <td class="action-cell"><button class="btn-icon" title="Remove key" onclick="removeRow(this)">&#215;</button></td>`;
+
+  const keyTd = document.createElement('td');
+  keyTd.className = 'key-cell';
+  const keyInp = document.createElement('input');
+  keyInp.type = 'text';
+  keyInp.className = 'key-input';
+  keyInp.value = key;
+  keyInp.placeholder = 'KEY';
+  keyTd.appendChild(keyInp);
+
+  const valTd = document.createElement('td');
+  valTd.className = 'val-cell';
+  valTd.appendChild(makeValueInput(key, value));
+
+  const actTd = document.createElement('td');
+  actTd.className = 'action-cell';
+  const delBtn = document.createElement('button');
+  delBtn.className = 'btn-icon';
+  delBtn.title = 'Remove key';
+  delBtn.innerHTML = '&#215;';
+  delBtn.addEventListener('click', function () { removeRow(this); });
+  actTd.appendChild(delBtn);
+
+  tr.appendChild(keyTd);
+  tr.appendChild(valTd);
+  tr.appendChild(actTd);
+
+  // When the key name is changed, swap the value element to the right type.
+  keyInp.addEventListener('change', () => {
+    const elem = valTd.querySelector('.val-input');
+    const currentVal = elem ? elem.value : '';
+    valTd.replaceChildren(makeValueInput(keyInp.value, currentVal));
+  });
+
   return tr;
 }
 
