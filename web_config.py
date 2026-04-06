@@ -391,8 +391,9 @@ function makeValueInput(key, value) {
       const sel = document.createElement('select');
       sel.className = 'val-input';
       const lower = String(value).toLowerCase();
-      const normalised = ['true', 'yes', '1'].includes(lower) ? 'True' : 'False';
-      ['True', 'False'].forEach(opt => {
+      const boolOptions = ['True', 'False'];
+      const normalised = ['true', 'yes', '1'].includes(lower) ? boolOptions[0] : boolOptions[1];
+      boolOptions.forEach(opt => {
         const o = document.createElement('option');
         o.value = opt;
         o.textContent = opt;
@@ -451,8 +452,8 @@ function makeValueInput(key, value) {
       const sel = document.createElement('select');
       sel.className = 'val-input';
       const lower = String(value).toLowerCase();
-      const match = info.options.find(o => o.toLowerCase() === lower);
-      if (value && !match) {
+      const hasMatch = info.options.some(o => o.toLowerCase() === lower);
+      if (value && !hasMatch) {
         // Preserve an unknown current value as a custom option
         const o = document.createElement('option');
         o.value = value;
@@ -512,9 +513,9 @@ function renderRow(key, value) {
 
   // When the key name is changed, swap the value element to the right type.
   keyInp.addEventListener('change', () => {
-    const currentVal = (valTd.querySelector('.val-input') || {}).value || '';
-    valTd.innerHTML = '';
-    valTd.appendChild(makeValueInput(keyInp.value, currentVal));
+    const elem = valTd.querySelector('.val-input');
+    const currentVal = elem ? elem.value : '';
+    valTd.replaceChildren(makeValueInput(keyInp.value, currentVal));
   });
 
   return tr;
