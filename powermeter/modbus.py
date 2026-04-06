@@ -1,20 +1,15 @@
+import struct
+
 from .base import Powermeter
 from pymodbus.client import ModbusTcpClient
-from pymodbus.payload import BinaryPayloadDecoder
-from pymodbus.constants import Endian
 
 
-DATA_TYPE_DECODERS = {
-    "FLOAT32": "decode_32bit_float",
-    "INT16": "decode_16bit_int",
-    "UINT16": "decode_16bit_uint",
-    "INT32": "decode_32bit_int",
-    "UINT32": "decode_32bit_uint",
-}
-
-BYTE_ORDERS = {
-    "BIG": Endian.BIG,
-    "LITTLE": Endian.LITTLE,
+STRUCT_FORMATS = {
+    "FLOAT32": "f",
+    "INT16": "h",
+    "UINT16": "H",
+    "INT32": "i",
+    "UINT32": "I",
 }
 
 
@@ -46,10 +41,7 @@ class ModbusPowermeter(Powermeter):
         self.byte_order = byte_order.upper()
         self.word_order = word_order.upper()
 
-        self._byte_order = BYTE_ORDERS.get(self.byte_order, Endian.BIG)
-        self._word_order = BYTE_ORDERS.get(self.word_order, Endian.BIG)
-        self._decode_method = DATA_TYPE_DECODERS.get(self.data_type)
-        if not self._decode_method:
+        if self.data_type not in STRUCT_FORMATS:
             raise ValueError(f"Unsupported data type: {data_type}")
 
         self.register_type = register_type.upper()
@@ -61,13 +53,14 @@ class ModbusPowermeter(Powermeter):
 
     def get_powermeter_watts(self):
         read = getattr(self.client, self._read_method)
-        result = read(self.address, self.count, unit=self.unit_id)
+        result = read(self.address, self.count, slave=self.unit_id)
         if result.isError():
             raise Exception("Error reading Modbus data")
-        decoder = BinaryPayloadDecoder.fromRegisters(
-            result.registers,
-            byteorder=self._byte_order,
-            wordorder=self._word_order,
-        )
-        value = getattr(decoder, self._decode_method)()
+        bo = ">" if self.byte_order == "BIG" else "<"
+        word_bytes = [struct.pack(f"{bo}H", r) for r in result.registers]
+        if self.word_order == "LITTLE":
+            word_bytes = list(reversed(word_bytes))
+        raw = b"".join(word_bytes)
+        fmt_char = STRUCT_FORMATS[self.data_type]
+        value = struct.unpack(f"{bo}{fmt_char}", raw)[0]
         return [float(value)]
