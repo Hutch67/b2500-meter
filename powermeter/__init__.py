@@ -18,4 +18,5 @@ from .offset import OffsetPowermeter
 from .slewrate import SlewRatePowermeter
 from .deadband import DeadBandPowermeter
 from .holdtimer import HoldTimerPowermeter
+from .pid import PidPowermeter
 from .tq_em import TQEnergyManager

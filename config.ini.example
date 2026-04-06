@@ -65,6 +65,39 @@ DEADBAND_WATTS = 0
 # Example: HOLD_TIME = 5  (hold each reported value for at least 5 seconds)
 # Can be overridden per powermeter section
 HOLD_TIME = 0
+# Global PID controller - applies closed-loop control to steer the grid meter reading toward a setpoint
+# The PID uses the raw power reading as its process variable and computes an adjustment.
+# Positive PID output motivates the B2500 to increase feed-in; negative output to decrease it.
+#
+# PID_KP: Proportional gain. Start with 0.5–1.0 and increase until slight oscillation, then back off ~30%.
+#         Set to 0 to disable PID (default).
+# PID_KI: Integral gain. Eliminates steady-state error. Start very small (0.01–0.05).
+#         The integral time constant Ti = Kp/Ki should be much longer than the B2500 response time.
+#         A good starting point: Ti = 60–120s → Ki = Kp / Ti
+# PID_KD: Derivative gain. Anticipates changes. Usually 0 (noisy readings amplify D-term).
+# PID_SETPOINT: Target grid power in watts (positive = import from grid).
+#               Default 0. Use 10–20 to maintain a small import buffer.
+# PID_OUTPUT_MAX: Maximum absolute PID output in watts. Should match B2500 max output (e.g. 800 or 1200).
+#                 Prevents integral windup. Default 800.
+# PID_MODE: "bias" — add PID output to the raw meter reading (recommended, the B2500 still sees
+#                     realistic data with a control bias applied)
+#           "replace" — use PID output directly as the reported value (the B2500 sees only the
+#                       controller output, not the actual meter reading)
+#           Default: bias
+#
+# Tuning guide (Method 1 — Manual Tuning):
+#   1. Start P-only: PID_KP = 0.5, PID_KI = 0, PID_KD = 0, PID_SETPOINT = 10
+#   2. Observe grid meter for 10–30 min. If too slow, double KP. If oscillating, halve KP.
+#   3. Add integral: PID_KI = 0.01. If steady-state offset persists, double KI.
+#   4. D-term is usually not needed. If used, keep very small.
+#
+# Can be overridden per powermeter section
+PID_KP = 0
+PID_KI = 0
+PID_KD = 0
+PID_SETPOINT = 0
+PID_OUTPUT_MAX = 800
+PID_MODE = bias
 
 #[SHELLY]
 #TYPE = 1PM #PLUS1PM #EM #3EM #3EMPRO
@@ -86,6 +119,13 @@ HOLD_TIME = 0
 #HOLD_TIME = 0
 ## Per-powermeter power offset override in watts (optional, can be negative)
 #POWER_OFFSET = 0
+## Per-powermeter PID controller overrides (optional)
+#PID_KP = 0
+#PID_KI = 0
+#PID_KD = 0
+#PID_SETPOINT = 0
+#PID_OUTPUT_MAX = 800
+#PID_MODE = bias
 
 #[TASMOTA]
 #IP = 192.168.1.101
