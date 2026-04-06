@@ -20,6 +20,9 @@ from config.config_loader import (
     create_mqtt_powermeter,
     create_json_http_powermeter,
     create_tq_em_powermeter,
+    safe_getboolean,
+    safe_getint,
+    safe_getfloat,
 )
 import unittest
 from unittest.mock import patch, Mock
@@ -299,6 +302,76 @@ def test_read_all_powermeter_configs():
         # Some powermeters might fail due to connection issues, but the function should run
         assert isinstance(powermeters, list)
 
+    except Exception as e:
+        if "Connection" not in str(e) and "timed out" not in str(e):
+            raise
+
+
+def test_safe_getboolean_valid():
+    """safe_getboolean returns the correct value for valid boolean strings."""
+    config = configparser.ConfigParser()
+    config["S"] = {"FLAG": "true"}
+    assert safe_getboolean(config, "S", "FLAG", fallback=False) is True
+
+
+def test_safe_getboolean_typo_uses_fallback():
+    """safe_getboolean returns the fallback and does not raise on a typo value."""
+    config = configparser.ConfigParser()
+    config["S"] = {"FLAG": "Flase"}
+    result = safe_getboolean(config, "S", "FLAG", fallback=False)
+    assert result is False
+
+
+def test_safe_getboolean_missing_uses_fallback():
+    """safe_getboolean returns the fallback when the key is absent."""
+    config = configparser.ConfigParser()
+    config["S"] = {}
+    assert safe_getboolean(config, "S", "MISSING", fallback=True) is True
+
+
+def test_safe_getint_valid():
+    """safe_getint returns the correct integer for a valid value."""
+    config = configparser.ConfigParser()
+    config["S"] = {"PORT": "8080"}
+    assert safe_getint(config, "S", "PORT", fallback=80) == 8080
+
+
+def test_safe_getint_typo_uses_fallback():
+    """safe_getint returns the fallback and does not raise on a typo value."""
+    config = configparser.ConfigParser()
+    config["S"] = {"PORT": "80xx"}
+    result = safe_getint(config, "S", "PORT", fallback=1883)
+    assert result == 1883
+
+
+def test_safe_getfloat_valid():
+    """safe_getfloat returns the correct float for a valid value."""
+    config = configparser.ConfigParser()
+    config["S"] = {"INTERVAL": "1.5"}
+    assert safe_getfloat(config, "S", "INTERVAL", fallback=0.0) == 1.5
+
+
+def test_safe_getfloat_typo_uses_fallback():
+    """safe_getfloat returns the fallback and does not raise on a typo value."""
+    config = configparser.ConfigParser()
+    config["S"] = {"INTERVAL": "1.5s"}
+    result = safe_getfloat(config, "S", "INTERVAL", fallback=0.0)
+    assert result == 0.0
+
+
+def test_read_all_powermeter_configs_typo_in_general():
+    """read_all_powermeter_configs does not raise when GENERAL section has typo'd numeric values."""
+    config = configparser.ConfigParser()
+    config["GENERAL"] = {
+        "THROTTLE_INTERVAL": "bad_value",
+        "EMA_ALPHA": "not_a_float",
+        "DEADBAND_WATTS": "50abc",
+    }
+    config["TASMOTA_1"] = {"IP": "127.0.0.1"}
+    # Should not raise even with invalid values in GENERAL
+    try:
+        powermeters = read_all_powermeter_configs(config)
+        assert isinstance(powermeters, list)
     except Exception as e:
         if "Connection" not in str(e) and "timed out" not in str(e):
             raise

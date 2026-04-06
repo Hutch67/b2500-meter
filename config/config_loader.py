@@ -3,6 +3,42 @@ from ipaddress import IPv4Network, IPv4Address
 from typing import List, Union, Tuple
 from config.logger import logger
 
+
+def safe_getboolean(config: configparser.ConfigParser, section: str, option: str, fallback: bool) -> bool:
+    """Like config.getboolean but logs a warning and uses fallback on invalid values."""
+    try:
+        return config.getboolean(section, option, fallback=fallback)
+    except ValueError:
+        raw = config.get(section, option, fallback=str(fallback))
+        logger.warning(
+            f"Invalid boolean value '{raw}' for [{section}] {option}; using fallback '{fallback}'"
+        )
+        return fallback
+
+
+def safe_getint(config: configparser.ConfigParser, section: str, option: str, fallback: int) -> int:
+    """Like config.getint but logs a warning and uses fallback on invalid values."""
+    try:
+        return config.getint(section, option, fallback=fallback)
+    except ValueError:
+        raw = config.get(section, option, fallback=str(fallback))
+        logger.warning(
+            f"Invalid integer value '{raw}' for [{section}] {option}; using fallback '{fallback}'"
+        )
+        return fallback
+
+
+def safe_getfloat(config: configparser.ConfigParser, section: str, option: str, fallback: float) -> float:
+    """Like config.getfloat but logs a warning and uses fallback on invalid values."""
+    try:
+        return config.getfloat(section, option, fallback=fallback)
+    except ValueError:
+        raw = config.get(section, option, fallback=str(fallback))
+        logger.warning(
+            f"Invalid float value '{raw}' for [{section}] {option}; using fallback '{fallback}'"
+        )
+        return fallback
+
 from powermeter import (
     Powermeter,
     Tasmota,
@@ -65,23 +101,23 @@ def read_all_powermeter_configs(
     config: configparser.ConfigParser,
 ) -> List[Tuple[Powermeter, ClientFilter]]:
     powermeters = []
-    global_throttle_interval = config.getfloat(
-        "GENERAL", "THROTTLE_INTERVAL", fallback=0.0
+    global_throttle_interval = safe_getfloat(
+        config, "GENERAL", "THROTTLE_INTERVAL", fallback=0.0
     )
-    global_ema_alpha = config.getfloat("GENERAL", "EMA_ALPHA", fallback=0.0)
-    global_ema_interval = config.getfloat("GENERAL", "EMA_INTERVAL", fallback=0.0)
-    global_slew_rate = config.getfloat(
-        "GENERAL", "SLEW_RATE_WATTS_PER_SEC", fallback=0.0
+    global_ema_alpha = safe_getfloat(config, "GENERAL", "EMA_ALPHA", fallback=0.0)
+    global_ema_interval = safe_getfloat(config, "GENERAL", "EMA_INTERVAL", fallback=0.0)
+    global_slew_rate = safe_getfloat(
+        config, "GENERAL", "SLEW_RATE_WATTS_PER_SEC", fallback=0.0
     )
-    global_deadband_watts = config.getfloat("GENERAL", "DEADBAND_WATTS", fallback=0.0)
-    global_hold_time = config.getfloat("GENERAL", "HOLD_TIME", fallback=0.0)
-    global_power_offset = config.getfloat("GENERAL", "POWER_OFFSET", fallback=0.0)
+    global_deadband_watts = safe_getfloat(config, "GENERAL", "DEADBAND_WATTS", fallback=0.0)
+    global_hold_time = safe_getfloat(config, "GENERAL", "HOLD_TIME", fallback=0.0)
+    global_power_offset = safe_getfloat(config, "GENERAL", "POWER_OFFSET", fallback=0.0)
 
     for section in config.sections():
         powermeter = create_powermeter(section, config)
         if powermeter is not None:
-            section_throttle_interval = config.getfloat(
-                section, "THROTTLE_INTERVAL", fallback=global_throttle_interval
+            section_throttle_interval = safe_getfloat(
+                config, section, "THROTTLE_INTERVAL", fallback=global_throttle_interval
             )
 
             if section_throttle_interval > 0:
@@ -95,8 +131,8 @@ def read_all_powermeter_configs(
                 )
                 powermeter = ThrottledPowermeter(powermeter, section_throttle_interval)
 
-            section_ema_alpha = config.getfloat(
-                section, "EMA_ALPHA", fallback=global_ema_alpha
+            section_ema_alpha = safe_getfloat(
+                config, section, "EMA_ALPHA", fallback=global_ema_alpha
             )
             if section_ema_alpha > 0:
                 if section_ema_alpha > 1.0:
@@ -108,8 +144,8 @@ def read_all_powermeter_configs(
                     if config.has_option(section, "EMA_ALPHA")
                     else "global"
                 )
-                section_ema_interval = config.getfloat(
-                    section, "EMA_INTERVAL", fallback=global_ema_interval
+                section_ema_interval = safe_getfloat(
+                    config, section, "EMA_INTERVAL", fallback=global_ema_interval
                 )
                 if section_ema_interval > 0:
                     ema_interval_source = (
@@ -129,8 +165,8 @@ def read_all_powermeter_configs(
                     powermeter, alpha=section_ema_alpha, ema_interval=section_ema_interval
                 )
 
-            section_slew_rate = config.getfloat(
-                section, "SLEW_RATE_WATTS_PER_SEC", fallback=global_slew_rate
+            section_slew_rate = safe_getfloat(
+                config, section, "SLEW_RATE_WATTS_PER_SEC", fallback=global_slew_rate
             )
             if section_slew_rate > 0:
                 slew_source = (
@@ -143,8 +179,8 @@ def read_all_powermeter_configs(
                 )
                 powermeter = SlewRatePowermeter(powermeter, section_slew_rate)
 
-            section_deadband_watts = config.getfloat(
-                section, "DEADBAND_WATTS", fallback=global_deadband_watts
+            section_deadband_watts = safe_getfloat(
+                config, section, "DEADBAND_WATTS", fallback=global_deadband_watts
             )
             if section_deadband_watts > 0:
                 deadband_source = (
@@ -157,8 +193,8 @@ def read_all_powermeter_configs(
                 )
                 powermeter = DeadBandPowermeter(powermeter, section_deadband_watts)
 
-            section_hold_time = config.getfloat(
-                section, "HOLD_TIME", fallback=global_hold_time
+            section_hold_time = safe_getfloat(
+                config, section, "HOLD_TIME", fallback=global_hold_time
             )
             if section_hold_time > 0:
                 hold_source = (
@@ -171,8 +207,8 @@ def read_all_powermeter_configs(
                 )
                 powermeter = HoldTimerPowermeter(powermeter, section_hold_time)
 
-            section_power_offset = config.getfloat(
-                section, "POWER_OFFSET", fallback=global_power_offset
+            section_power_offset = safe_getfloat(
+                config, section, "POWER_OFFSET", fallback=global_power_offset
             )
             if section_power_offset != 0.0:
                 offset_source = (
@@ -271,7 +307,7 @@ def create_mqtt_powermeter(
 ) -> Powermeter:
     return MqttPowermeter(
         config.get(section, "BROKER", fallback=""),
-        config.getint(section, "PORT", fallback=1883),
+        safe_getint(config, section, "PORT", fallback=1883),
         config.get(section, "TOPIC", fallback=""),
         config.get(section, "JSON_PATH", fallback=None),
         config.get(section, "USERNAME", fallback=None),
@@ -314,10 +350,10 @@ def create_modbus_powermeter(
 ) -> Powermeter:
     return ModbusPowermeter(
         config.get(section, "HOST", fallback=""),
-        config.getint(section, "PORT", fallback=502),
-        config.getint(section, "UNIT_ID", fallback=1),
-        config.getint(section, "ADDRESS", fallback=0),
-        config.getint(section, "COUNT", fallback=1),
+        safe_getint(config, section, "PORT", fallback=502),
+        safe_getint(config, section, "UNIT_ID", fallback=1),
+        safe_getint(config, section, "ADDRESS", fallback=0),
+        safe_getint(config, section, "COUNT", fallback=1),
         config.get(section, "DATA_TYPE", fallback="UINT16"),
         config.get(section, "BYTE_ORDER", fallback="BIG"),
         config.get(section, "WORD_ORDER", fallback="BIG"),
@@ -370,10 +406,10 @@ def create_homeassistant_powermeter(
     return HomeAssistant(
         config.get(section, "IP", fallback=""),
         config.get(section, "PORT", fallback=""),
-        config.getboolean(section, "HTTPS", fallback=False),
+        safe_getboolean(config, section, "HTTPS", fallback=False),
         config.get(section, "ACCESSTOKEN", fallback=""),
         current_power_entity,
-        config.getboolean(section, "POWER_CALCULATE", fallback=False),
+        safe_getboolean(config, section, "POWER_CALCULATE", fallback=False),
         power_input_alias,
         power_output_alias,
         config.get(section, "API_PATH_PREFIX", fallback=None),
@@ -387,7 +423,7 @@ def create_iobroker_powermeter(
         config.get(section, "IP", fallback=""),
         config.get(section, "PORT", fallback=""),
         config.get(section, "CURRENT_POWER_ALIAS", fallback=""),
-        config.getboolean(section, "POWER_CALCULATE", fallback=False),
+        safe_getboolean(config, section, "POWER_CALCULATE", fallback=False),
         config.get(section, "POWER_INPUT_ALIAS", fallback=""),
         config.get(section, "POWER_OUTPUT_ALIAS", fallback=""),
     )
@@ -399,7 +435,7 @@ def create_emlog_powermeter(
     return Emlog(
         config.get(section, "IP", fallback=""),
         config.get(section, "METER_INDEX", fallback=""),
-        config.getboolean(section, "JSON_POWER_CALCULATE", fallback=False),
+        safe_getboolean(config, section, "JSON_POWER_CALCULATE", fallback=False),
     )
 
 
@@ -425,7 +461,7 @@ def create_tasmota_powermeter(
         config.get(section, "JSON_POWER_MQTT_LABEL", fallback=""),
         config.get(section, "JSON_POWER_INPUT_MQTT_LABEL", fallback=""),
         config.get(section, "JSON_POWER_OUTPUT_MQTT_LABEL", fallback=""),
-        config.getboolean(section, "JSON_POWER_CALCULATE", fallback=False),
+        safe_getboolean(config, section, "JSON_POWER_CALCULATE", fallback=False),
     )
 
 
@@ -435,5 +471,5 @@ def create_tq_em_powermeter(
     return TQEnergyManager(
         config.get(section, "IP", fallback=""),
         config.get(section, "PASSWORD", fallback=""),
-        timeout=config.getfloat(section, "TIMEOUT", fallback=5.0),
+        timeout=safe_getfloat(config, section, "TIMEOUT", fallback=5.0),
     )

@@ -4,7 +4,7 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Tuple
-from config.config_loader import read_all_powermeter_configs, ClientFilter
+from config.config_loader import read_all_powermeter_configs, ClientFilter, safe_getboolean, safe_getint
 from ct001 import CT001
 from powermeter import Powermeter
 from shelly import Shelly
@@ -62,17 +62,17 @@ def run_device(
         disable_sum = (
             args.disable_sum
             if args.disable_sum is not None
-            else cfg.getboolean("GENERAL", "DISABLE_SUM_PHASES", fallback=False)
+            else safe_getboolean(cfg, "GENERAL", "DISABLE_SUM_PHASES", fallback=False)
         )
         disable_absolute = (
             args.disable_absolute
             if args.disable_absolute is not None
-            else cfg.getboolean("GENERAL", "DISABLE_ABSOLUTE_VALUES", fallback=False)
+            else safe_getboolean(cfg, "GENERAL", "DISABLE_ABSOLUTE_VALUES", fallback=False)
         )
         poll_interval = (
             args.poll_interval
             if args.poll_interval is not None
-            else cfg.getint("GENERAL", "POLL_INTERVAL", fallback=1)
+            else safe_getint(cfg, "GENERAL", "POLL_INTERVAL", fallback=1)
         )
         logger.debug(f"CT001 Settings for {device_id}:")
         logger.debug(f"Disable Sum Phases: {disable_sum}")
@@ -195,7 +195,7 @@ def main():
     skip_test = (
         args.skip_powermeter_test
         if args.skip_powermeter_test is not None
-        else cfg.getboolean("GENERAL", "SKIP_POWERMETER_TEST", fallback=False)
+        else safe_getboolean(cfg, "GENERAL", "SKIP_POWERMETER_TEST", fallback=False)
     )
 
     device_ids = args.device_ids if args.device_ids is not None else []
@@ -225,8 +225,8 @@ def main():
         cfg.set("GENERAL", "THROTTLE_INTERVAL", str(args.throttle_interval))
 
     # Start health check server for watchdog monitoring
-    if cfg.getboolean("GENERAL", "ENABLE_HEALTH_CHECK", fallback=True):
-        web_config_enabled = cfg.getboolean("GENERAL", "WEB_CONFIG_ENABLED", fallback=False)
+    if safe_getboolean(cfg, "GENERAL", "ENABLE_HEALTH_CHECK", fallback=True):
+        web_config_enabled = safe_getboolean(cfg, "GENERAL", "WEB_CONFIG_ENABLED", fallback=False)
         logger.info("Starting health check service...")
         if start_health_service(config_path=args.config, enable_web_config=web_config_enabled):
             logger.info("Health check service started successfully")
