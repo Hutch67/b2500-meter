@@ -65,6 +65,51 @@ DEADBAND_WATTS = 0
 # Example: HOLD_TIME = 5  (hold each reported value for at least 5 seconds)
 # Can be overridden per powermeter section
 HOLD_TIME = 0
+# Global PID controller - applies closed-loop control to steer the grid meter reading toward zero.
+# The PID uses the raw power reading as its process variable and computes an adjustment.
+# A negative adjustment decreases the reported value (motivates the B2500 to reduce feed-in,
+# allowing imports to rise); a positive adjustment increases it (motivates B2500 to increase feed-in).
+#
+# Error formula: error = −actual_power
+# A positive grid import produces a negative error; the PID output opposes the import,
+# telling the B2500 to cover it.
+#
+# To keep a small safety buffer and avoid exporting to the grid, set a small negative
+# POWER_OFFSET (e.g. POWER_OFFSET = -20) in the filter chain before the PID.
+#
+# PID_KP: Proportional gain. 0.5 is the recommended value.
+#         Must be < 1 to avoid instability.  Set to 0 to disable PID (default).
+# PID_KI: Integral gain. Usually 0 — a non-zero Ki can cause windup during
+#         sustained imbalances or when the output is saturated.
+#         Keep at 0 unless you need to eliminate steady-state error and
+#         understand anti-windup behaviour.
+# PID_KD: Derivative gain. Anticipates changes. Usually 0 (noisy readings amplify the D-term).
+# PID_OUTPUT_MAX: Maximum absolute PID output in watts. Should match B2500 max output (e.g. 800 or 1200).
+#                 Prevents integral windup. Default 800.
+# PID_MODE: "bias" — add PID output to the raw meter reading (recommended, the B2500 still sees
+#                     realistic data with a control bias applied)
+#           "replace" — use PID output directly as the reported value (the B2500 sees only the
+#                       controller output, not the actual meter reading)
+#           Default: bias
+#
+# Stability tip: enable DEADBAND_WATTS (e.g. 20) and EMA_ALPHA (e.g. 0.3) BEFORE the PID to
+# smooth the input signal.  This is the most effective way to prevent oscillation.
+#
+# Tuning guide (Method 1 — Manual Tuning):
+#   1. Set POWER_OFFSET = -20 to hold a 20 W import safety buffer.
+#   2. Enable smoothing: EMA_ALPHA = 0.3, DEADBAND_WATTS = 20
+#   3. Start P-only: PID_KP = 0.5, PID_KI = 0, PID_KD = 0
+#   4. Observe grid meter for 10–30 min.  If oscillating, reduce Kp (e.g. 0.4).
+#      If response is too slow, try 0.6.
+#   5. Keep PID_KI = 0 unless you need to eliminate steady-state error and
+#      understand anti-windup limitations.
+#
+# Can be overridden per powermeter section
+PID_KP = 0
+PID_KI = 0
+PID_KD = 0
+PID_OUTPUT_MAX = 800
+PID_MODE = bias
 
 #[SHELLY]
 #TYPE = 1PM #PLUS1PM #EM #3EM #3EMPRO
@@ -86,6 +131,12 @@ HOLD_TIME = 0
 #HOLD_TIME = 0
 ## Per-powermeter power offset override in watts (optional, can be negative)
 #POWER_OFFSET = 0
+## Per-powermeter PID controller overrides (optional)
+#PID_KP = 0
+#PID_KI = 0
+#PID_KD = 0
+#PID_OUTPUT_MAX = 800
+#PID_MODE = bias
 
 #[TASMOTA]
 #IP = 192.168.1.101

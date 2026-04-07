@@ -370,6 +370,12 @@ const KEY_TYPES = {
   DEADBAND_WATTS:          { type: 'float' },
   HOLD_TIME:               { type: 'float' },
   TIMEOUT:                 { type: 'float' },
+  // PID controller
+  PID_KP:                  { type: 'float', min: 0 },
+  PID_KI:                  { type: 'float', min: 0 },
+  PID_KD:                  { type: 'float', min: 0 },
+  PID_OUTPUT_MAX:          { type: 'float', min: 0 },
+  PID_MODE:                { type: 'select', options: ['bias', 'replace'] },
   // Passwords
   PASS:                    { type: 'password' },
   PASSWORD:                { type: 'password' },
@@ -764,7 +770,7 @@ def write_config_from_dict(config_path: str, sections: Dict, order: list) -> Non
     for line in original_lines:
         stripped = line.strip()
         if stripped.startswith("[") and "]" in stripped:
-            name = stripped[1:stripped.index("]")]
+            name = stripped[1 : stripped.index("]")]
             if cur_name is not None:
                 parsed_sections.append([cur_name, cur_lines])
             else:
@@ -820,7 +826,9 @@ def write_config_from_dict(config_path: str, sections: Dict, order: list) -> Non
         if section not in sections:
             continue
         if section in orig_section_lines:
-            output_lines.extend(_update_section(orig_section_lines[section], sections[section]))
+            output_lines.extend(
+                _update_section(orig_section_lines[section], sections[section])
+            )
         else:
             # Entirely new section
             if output_lines and output_lines[-1].strip():

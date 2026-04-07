@@ -4,7 +4,9 @@ from typing import List, Union, Tuple
 from config.logger import logger
 
 
-def safe_getboolean(config: configparser.ConfigParser, section: str, option: str, fallback: bool) -> bool:
+def safe_getboolean(
+    config: configparser.ConfigParser, section: str, option: str, fallback: bool
+) -> bool:
     """Like config.getboolean but logs a warning and uses fallback on invalid values."""
     try:
         return config.getboolean(section, option, fallback=fallback)
@@ -16,7 +18,9 @@ def safe_getboolean(config: configparser.ConfigParser, section: str, option: str
         return fallback
 
 
-def safe_getint(config: configparser.ConfigParser, section: str, option: str, fallback: int) -> int:
+def safe_getint(
+    config: configparser.ConfigParser, section: str, option: str, fallback: int
+) -> int:
     """Like config.getint but logs a warning and uses fallback on invalid values."""
     try:
         return config.getint(section, option, fallback=fallback)
@@ -28,7 +32,9 @@ def safe_getint(config: configparser.ConfigParser, section: str, option: str, fa
         return fallback
 
 
-def safe_getfloat(config: configparser.ConfigParser, section: str, option: str, fallback: float) -> float:
+def safe_getfloat(
+    config: configparser.ConfigParser, section: str, option: str, fallback: float
+) -> float:
     """Like config.getfloat but logs a warning and uses fallback on invalid values."""
     try:
         return config.getfloat(section, option, fallback=fallback)
@@ -38,6 +44,7 @@ def safe_getfloat(config: configparser.ConfigParser, section: str, option: str, 
             f"Invalid float value '{raw}' for [{section}] {option}; using fallback '{fallback}'"
         )
         return fallback
+
 
 from powermeter import (
     Powermeter,
@@ -65,6 +72,7 @@ from powermeter import (
     SlewRatePowermeter,
     DeadBandPowermeter,
     HoldTimerPowermeter,
+    PidPowermeter,
 )
 
 SHELLY_SECTION = "SHELLY"
@@ -109,9 +117,18 @@ def read_all_powermeter_configs(
     global_slew_rate = safe_getfloat(
         config, "GENERAL", "SLEW_RATE_WATTS_PER_SEC", fallback=0.0
     )
-    global_deadband_watts = safe_getfloat(config, "GENERAL", "DEADBAND_WATTS", fallback=0.0)
+    global_deadband_watts = safe_getfloat(
+        config, "GENERAL", "DEADBAND_WATTS", fallback=0.0
+    )
     global_hold_time = safe_getfloat(config, "GENERAL", "HOLD_TIME", fallback=0.0)
     global_power_offset = safe_getfloat(config, "GENERAL", "POWER_OFFSET", fallback=0.0)
+    global_pid_kp = safe_getfloat(config, "GENERAL", "PID_KP", fallback=0.0)
+    global_pid_ki = safe_getfloat(config, "GENERAL", "PID_KI", fallback=0.0)
+    global_pid_kd = safe_getfloat(config, "GENERAL", "PID_KD", fallback=0.0)
+    global_pid_output_max = safe_getfloat(
+        config, "GENERAL", "PID_OUTPUT_MAX", fallback=800.0
+    )
+    global_pid_mode = config.get("GENERAL", "PID_MODE", fallback="bias").strip().lower()
 
     for section in config.sections():
         powermeter = create_powermeter(section, config)
@@ -162,7 +179,9 @@ def read_all_powermeter_configs(
                         f"Applying {ema_source} EMA smoothing (alpha={section_ema_alpha}) to {section}"
                     )
                 powermeter = ExponentialMovingAveragePowermeter(
-                    powermeter, alpha=section_ema_alpha, ema_interval=section_ema_interval
+                    powermeter,
+                    alpha=section_ema_alpha,
+                    ema_interval=section_ema_interval,
                 )
 
             section_slew_rate = safe_getfloat(
@@ -220,6 +239,45 @@ def read_all_powermeter_configs(
                     f"Applying {offset_source} power offset ({section_power_offset}W) to {section}"
                 )
                 powermeter = OffsetPowermeter(powermeter, offset=section_power_offset)
+
+            section_pid_kp = safe_getfloat(
+                config, section, "PID_KP", fallback=global_pid_kp
+            )
+            if section_pid_kp > 0:
+                pid_source = (
+                    "section-specific"
+                    if config.has_option(section, "PID_KP")
+                    else "global"
+                )
+                section_pid_ki = safe_getfloat(
+                    config, section, "PID_KI", fallback=global_pid_ki
+                )
+                section_pid_kd = safe_getfloat(
+                    config, section, "PID_KD", fallback=global_pid_kd
+                )
+                section_pid_output_max = safe_getfloat(
+                    config, section, "PID_OUTPUT_MAX", fallback=global_pid_output_max
+                )
+                section_pid_mode = (
+                    config.get(section, "PID_MODE", fallback=global_pid_mode)
+                    .strip()
+                    .lower()
+                )
+                print(
+                    f"Applying {pid_source} PID controller "
+                    f"(Kp={section_pid_kp}, Ki={section_pid_ki}, "
+                    f"Kd={section_pid_kd}, "
+                    f"max={section_pid_output_max}W, mode={section_pid_mode}) "
+                    f"to {section}"
+                )
+                powermeter = PidPowermeter(
+                    powermeter,
+                    kp=section_pid_kp,
+                    ki=section_pid_ki,
+                    kd=section_pid_kd,
+                    output_max=section_pid_output_max,
+                    mode=section_pid_mode,
+                )
 
             client_filter = create_client_filter(section, config)
             powermeters.append((powermeter, client_filter))
