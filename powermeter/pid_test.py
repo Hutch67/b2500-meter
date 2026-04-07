@@ -36,35 +36,35 @@ class TestPidPowermeter(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_p_only_positive_error(self):
-        """With P-only control, a positive error (importing above setpoint)
-        produces a positive adjustment (more import reported), encouraging the
-        B2500 to increase output and drive actual down toward setpoint."""
+        """With P-only control, a large import (actual=200W, setpoint=0) produces
+        a negative adjustment to tell the B2500 to cover that import."""
         self.mock_powermeter.get_powermeter_watts.return_value = [200.0]
         pm = PidPowermeter(self.mock_powermeter, kp=1.0, setpoint=0.0, output_max=800.0)
-        # error = 200 - 0 = 200  →  P output = 200
+        # error = -0 - 200 = -200  →  P output = -200
         result = pm.get_powermeter_watts()
-        # bias mode: 200 + 200 = 400
-        self.assertAlmostEqual(result[0], 400.0)
+        # bias mode: 200 + (-200) = 0  (reported as balanced, B2500 stops)
+        self.assertAlmostEqual(result[0], 0.0)
 
     def test_p_only_negative_error(self):
-        """Negative reading (export) gives negative error → negative adjustment,
-        reporting more export to tell B2500 to back off and let imports rise."""
+        """Export reading (actual=-100W, setpoint=0) produces a positive adjustment,
+        telling the B2500 to reduce feed-in and let imports rise."""
         self.mock_powermeter.get_powermeter_watts.return_value = [-100.0]
         pm = PidPowermeter(self.mock_powermeter, kp=1.0, setpoint=0.0, output_max=800.0)
-        # error = -100 - 0 = -100  →  P output = -100
+        # error = -0 - (-100) = 100  →  P output = 100
         result = pm.get_powermeter_watts()
-        # bias: -100 + (-100) = -200
-        self.assertAlmostEqual(result[0], -200.0)
+        # bias: -100 + 100 = 0
+        self.assertAlmostEqual(result[0], 0.0)
 
     def test_p_only_with_setpoint(self):
-        """With a non-zero setpoint the controller should drive toward it."""
+        """With a non-zero setpoint the controller drives toward it.
+        For Kp=0.5 the P-only steady-state equals exactly the setpoint."""
         self.mock_powermeter.get_powermeter_watts.return_value = [100.0]
         pm = PidPowermeter(
             self.mock_powermeter, kp=0.5, setpoint=20.0, output_max=800.0
         )
-        # error = 100 - 20 = 80  →  P output = 40
+        # error = -20 - 100 = -120  →  P output = 0.5 * (-120) = -60
         result = pm.get_powermeter_watts()
-        self.assertAlmostEqual(result[0], 140.0)
+        self.assertAlmostEqual(result[0], 40.0)  # 100 + (-60)
 
     # ------------------------------------------------------------------
     # Output clamping
@@ -72,19 +72,19 @@ class TestPidPowermeter(unittest.TestCase):
 
     def test_output_clamped_positive(self):
         """PID output should not exceed +output_max."""
-        self.mock_powermeter.get_powermeter_watts.return_value = [1000.0]
+        self.mock_powermeter.get_powermeter_watts.return_value = [-1000.0]
         pm = PidPowermeter(self.mock_powermeter, kp=1.0, setpoint=0.0, output_max=500.0)
-        # error = 1000 - 0 = 1000  →  clamped to 500
+        # error = -0 - (-1000) = 1000  →  clamped to 500
         result = pm.get_powermeter_watts()
-        self.assertAlmostEqual(result[0], 1500.0)  # 1000 + 500
+        self.assertAlmostEqual(result[0], -500.0)  # -1000 + 500
 
     def test_output_clamped_negative(self):
         """PID output should not go below -output_max."""
-        self.mock_powermeter.get_powermeter_watts.return_value = [-2000.0]
+        self.mock_powermeter.get_powermeter_watts.return_value = [2000.0]
         pm = PidPowermeter(self.mock_powermeter, kp=1.0, setpoint=0.0, output_max=500.0)
-        # error = -2000 - 0 = -2000  →  clamped to -500
+        # error = -0 - 2000 = -2000  →  clamped to -500
         result = pm.get_powermeter_watts()
-        self.assertAlmostEqual(result[0], -2500.0)  # -2000 + (-500)
+        self.assertAlmostEqual(result[0], 1500.0)  # 2000 + (-500)
 
     # ------------------------------------------------------------------
     # Integral behaviour
@@ -108,9 +108,9 @@ class TestPidPowermeter(unittest.TestCase):
             mock_time.monotonic.return_value = t0 + 1.0
             r2 = pm.get_powermeter_watts()
 
-        # error = 100 - 0 = 100, integral = 100 * 1s = 100
-        # I output = 1.0 * 100 = 100
-        self.assertAlmostEqual(r2[0], 200.0)  # 100 + 100 in bias mode
+        # error = -0 - 100 = -100, integral = -100 * 1s = -100
+        # I output = 1.0 * -100 = -100
+        self.assertAlmostEqual(r2[0], 0.0)  # 100 + (-100) in bias mode
 
     def test_anti_windup_stops_integration(self):
         """The integral should not grow beyond what output_max allows."""
@@ -129,9 +129,9 @@ class TestPidPowermeter(unittest.TestCase):
             mock_time.monotonic.return_value = t0 + 10.0
             result = pm.get_powermeter_watts()
 
-        # Without anti-windup the integral would be 500*10 = 5000
-        # But output is clamped to +200, so bias result <= 500 + 200 = 700
-        self.assertLessEqual(result[0], 700.0)
+        # Without anti-windup the integral would be -500*10 = -5000
+        # But output is clamped to -200, so bias result >= 500 - 200 = 300
+        self.assertGreaterEqual(result[0], 300.0)
 
     # ------------------------------------------------------------------
     # Derivative behaviour
@@ -156,10 +156,10 @@ class TestPidPowermeter(unittest.TestCase):
             mock_time.monotonic.return_value = t0 + 1.0
             result = pm.get_powermeter_watts()
 
-        # error1 = 100-0 = 100, error2 = 200-0 = 200
-        # d_term = 1.0 * (200 - 100) / 1.0 = 100
-        # bias: 200 + 100 = 300
-        self.assertAlmostEqual(result[0], 300.0)
+        # error1 = -0-100 = -100, error2 = -0-200 = -200
+        # d_term = 1.0 * (-200 - (-100)) / 1.0 = -100
+        # bias: 200 + (-100) = 100
+        self.assertAlmostEqual(result[0], 100.0)
 
     # ------------------------------------------------------------------
     # Multi-phase
@@ -169,12 +169,12 @@ class TestPidPowermeter(unittest.TestCase):
         """PID output should be distributed equally across phases in bias mode."""
         self.mock_powermeter.get_powermeter_watts.return_value = [100.0, 200.0, 300.0]
         pm = PidPowermeter(self.mock_powermeter, kp=1.0, setpoint=0.0, output_max=800.0)
-        # total = 600, error = 600 - 0 = 600, P = 600
-        # per_phase = 600 / 3 = 200
+        # total = 600, error = -0 - 600 = -600, P = -600
+        # per_phase = -600 / 3 = -200
         result = pm.get_powermeter_watts()
-        self.assertAlmostEqual(result[0], 300.0)  # 100 + 200
-        self.assertAlmostEqual(result[1], 400.0)  # 200 + 200
-        self.assertAlmostEqual(result[2], 500.0)  # 300 + 200
+        self.assertAlmostEqual(result[0], -100.0)  # 100 + (-200)
+        self.assertAlmostEqual(result[1], 0.0)   # 200 + (-200)
+        self.assertAlmostEqual(result[2], 100.0)  # 300 + (-200)
 
     def test_multiphase_replace(self):
         """In replace mode, all phases should get equal share of PID output."""
@@ -186,13 +186,13 @@ class TestPidPowermeter(unittest.TestCase):
             output_max=800.0,
             mode="replace",
         )
-        # total = 600, error = 600 - 0 = 600, P = 600
-        # per_phase = 600 / 3 = 200
+        # total = 600, error = -0 - 600 = -600, P = -600
+        # per_phase = -600 / 3 = -200
         result = pm.get_powermeter_watts()
         self.assertEqual(len(result), 3)
-        self.assertAlmostEqual(result[0], 200.0)
-        self.assertAlmostEqual(result[1], 200.0)
-        self.assertAlmostEqual(result[2], 200.0)
+        self.assertAlmostEqual(result[0], -200.0)
+        self.assertAlmostEqual(result[1], -200.0)
+        self.assertAlmostEqual(result[2], -200.0)
 
     # ------------------------------------------------------------------
     # Replace mode basics
@@ -208,9 +208,9 @@ class TestPidPowermeter(unittest.TestCase):
             output_max=800.0,
             mode="replace",
         )
-        # error = 500 - 0 = 500, P = 500
+        # error = -0 - 500 = -500, P = -500
         result = pm.get_powermeter_watts()
-        self.assertAlmostEqual(result[0], 500.0)
+        self.assertAlmostEqual(result[0], -500.0)
 
     # ------------------------------------------------------------------
     # Zero gains (disabled)

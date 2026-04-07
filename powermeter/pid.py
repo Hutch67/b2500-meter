@@ -20,26 +20,27 @@ class PidPowermeter(Powermeter):
 
     **Gain sensitivity:** in ``mode="bias"`` the PID and the B2500's own
     closed-loop controller act *together*.  The effective closed-loop gain
-    is ``(1 + Kp) × Kb``, where ``Kb`` is the B2500's internal gain.
-    This means gains that appear small can cause oscillation.  Start with
-    ``kp`` in the range 0.05–0.1 and increase slowly.  Use the integral
-    term to eliminate the residual steady-state error that P-only control
-    leaves (P-only converges to ``Kp/(1+Kp)`` of the setpoint).
+    is ``(1 − Kp) × Kb``, where ``Kb`` is the B2500's internal gain.
+    The system is stable for ``0 < Kp < 1``.  Use ``Kp = 0.5`` as the
+    recommended starting value — at this gain P-only control reaches exactly
+    the setpoint in steady state without requiring integral action.
 
     **Anti-windup** is built in: the integral term is clamped so that the
     total PID output never exceeds ``[−output_max, +output_max]``, and
     integration is paused while the output is saturated.
 
     Error convention:
-        error = measurement − setpoint
-    A positive error means the grid is importing more than the setpoint,
-    so the B2500 should be encouraged to produce more to drive actual
-    toward the setpoint.  A negative error means the grid is importing
-    less than the setpoint (or exporting), so the B2500 should produce
-    less.  The PID output is added directly to the reading: a positive
-    output increases the reported value, motivating the B2500 to reduce
-    imports; a negative output decreases it (toward export), encouraging
-    the B2500 to increase imports until the setpoint is reached.
+        error = −setpoint − measurement
+    This keeps the effective closed-loop gain at ``(1 − Kp) × Kb`` (where
+    ``Kb`` is the B2500's internal gain), identical to the original stable
+    formula, while converging to the *correct* direction.  For ``Kp = 0.5``
+    P-only control the steady-state grid power equals the setpoint exactly;
+    for other values of ``Kp`` it equals ``Kp × setpoint / (1 − Kp)``.
+
+    **Important:** the integral term (``ki``) must remain at 0.  Because the
+    error does not cross zero at ``actual == setpoint`` (it equals
+    ``−2 × setpoint``), a non-zero ``ki`` causes the integral to accumulate
+    indefinitely and will destabilise the loop.
 
     The controller runs on the **sum** of all phases (total grid power)
     and distributes its output equally across phases.
@@ -110,7 +111,7 @@ class PidPowermeter(Powermeter):
 
         # Compute error on the total power across all phases
         total_power = sum(raw_values)
-        error = total_power - self.setpoint
+        error = -self.setpoint - total_power
 
         with self._lock:
             if self._prev_time is None:
