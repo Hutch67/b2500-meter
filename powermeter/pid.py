@@ -23,12 +23,15 @@ class PidPowermeter(Powermeter):
     integration is paused while the output is saturated.
 
     Error convention:
-        error = setpoint − measurement
-    A positive error means the grid is importing less than the setpoint
-    (or exporting), so the B2500 should feed in less.  A negative error
-    means the grid is importing more than the target, so the B2500 should
-    feed in more.  The sign is chosen so that the PID output can be added
-    directly to the reading to bias the B2500's internal controller.
+        error = measurement − setpoint
+    A positive error means the grid is importing more than the setpoint,
+    so the B2500 should be encouraged to produce more to drive actual
+    toward the setpoint.  A negative error means the grid is importing
+    less than the setpoint (or exporting), so the B2500 should produce
+    less.  The PID output is added directly to the reading: a positive
+    output increases the reported value, motivating the B2500 to reduce
+    imports; a negative output decreases it (toward export), encouraging
+    the B2500 to increase imports until the setpoint is reached.
 
     The controller runs on the **sum** of all phases (total grid power)
     and distributes its output equally across phases.
@@ -99,7 +102,7 @@ class PidPowermeter(Powermeter):
 
         # Compute error on the total power across all phases
         total_power = sum(raw_values)
-        error = self.setpoint - total_power
+        error = total_power - self.setpoint
 
         with self._lock:
             if self._prev_time is None:
