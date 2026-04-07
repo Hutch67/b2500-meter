@@ -374,7 +374,6 @@ const KEY_TYPES = {
   PID_KP:                  { type: 'float', min: 0 },
   PID_KI:                  { type: 'float', min: 0 },
   PID_KD:                  { type: 'float', min: 0 },
-  PID_SETPOINT:            { type: 'float' },
   PID_OUTPUT_MAX:          { type: 'float', min: 0 },
   PID_MODE:                { type: 'select', options: ['bias', 'replace'] },
   // Passwords

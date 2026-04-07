@@ -7,8 +7,7 @@ from .base import Powermeter
 class PidPowermeter(Powermeter):
     """
     A wrapper around a powermeter that applies a PID (Proportional-Integral-
-    Derivative) controller to steer the reported power toward a configurable
-    setpoint.
+    Derivative) controller to steer the reported power toward zero (grid balance).
 
     The PID controller uses the raw power-meter reading as its *process
     variable* and computes an adjustment that is either **added** to the raw
@@ -22,25 +21,20 @@ class PidPowermeter(Powermeter):
     closed-loop controller act *together*.  The effective closed-loop gain
     is ``(1 − Kp) × Kb``, where ``Kb`` is the B2500's internal gain.
     The system is stable for ``0 < Kp < 1``.  Use ``Kp = 0.5`` as the
-    recommended starting value — at this gain P-only control reaches exactly
-    the setpoint in steady state without requiring integral action.
+    recommended starting value.
 
     **Anti-windup** is built in: the integral term is clamped so that the
     total PID output never exceeds ``[−output_max, +output_max]``, and
     integration is paused while the output is saturated.
 
     Error convention:
-        error = −setpoint − measurement
-    This keeps the effective closed-loop gain at ``(1 − Kp) × Kb`` (where
-    ``Kb`` is the B2500's internal gain), identical to the original stable
-    formula, while converging to the *correct* direction.  For ``Kp = 0.5``
-    P-only control the steady-state grid power equals the setpoint exactly;
-    for other values of ``Kp`` it equals ``Kp × setpoint / (1 − Kp)``.
+        error = −measurement
+    A positive grid import produces a negative error, causing the PID to
+    reduce the reported value and motivate the B2500 to cover the import.
 
-    **Important:** the integral term (``ki``) must remain at 0.  Because the
-    error does not cross zero at ``actual == setpoint`` (it equals
-    ``−2 × setpoint``), a non-zero ``ki`` causes the integral to accumulate
-    indefinitely and will destabilise the loop.
+    To maintain a small import safety buffer (prevent export), set a small
+    negative ``POWER_OFFSET`` (e.g. ``POWER_OFFSET = -20``) in the filter
+    chain *before* the PID.
 
     The controller runs on the **sum** of all phases (total grid power)
     and distributes its output equally across phases.
@@ -49,7 +43,6 @@ class PidPowermeter(Powermeter):
         PID_KP          Proportional gain (default 0 → PID disabled)
         PID_KI          Integral gain (default 0)
         PID_KD          Derivative gain (default 0)
-        PID_SETPOINT    Target grid power in watts (default 0)
         PID_OUTPUT_MAX  Output clamp magnitude in watts (default 800)
         PID_MODE        "bias" or "replace" (default "bias")
     """
@@ -62,7 +55,6 @@ class PidPowermeter(Powermeter):
         kp: float = 0.0,
         ki: float = 0.0,
         kd: float = 0.0,
-        setpoint: float = 0.0,
         output_max: float = 800.0,
         mode: str = "bias",
     ):
@@ -74,7 +66,6 @@ class PidPowermeter(Powermeter):
             kp:  Proportional gain.
             ki:  Integral gain.
             kd:  Derivative gain.
-            setpoint:  Target grid power in watts (positive = import).
             output_max:  Maximum absolute PID output in watts.  Must be > 0.
             mode:  ``"bias"``  — add PID output to raw reading, or
                    ``"replace"`` — use PID output as the reported value.
@@ -91,7 +82,6 @@ class PidPowermeter(Powermeter):
         self.kp = kp
         self.ki = ki
         self.kd = kd
-        self.setpoint = setpoint
         self.output_max = output_max
         self.mode = mode
 
@@ -111,7 +101,7 @@ class PidPowermeter(Powermeter):
 
         # Compute error on the total power across all phases
         total_power = sum(raw_values)
-        error = -self.setpoint - total_power
+        error = -total_power
 
         with self._lock:
             if self._prev_time is None:

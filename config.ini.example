@@ -65,26 +65,24 @@ DEADBAND_WATTS = 0
 # Example: HOLD_TIME = 5  (hold each reported value for at least 5 seconds)
 # Can be overridden per powermeter section
 HOLD_TIME = 0
-# Global PID controller - applies closed-loop control to steer the grid meter reading toward a setpoint
+# Global PID controller - applies closed-loop control to steer the grid meter reading toward zero.
 # The PID uses the raw power reading as its process variable and computes an adjustment.
 # A negative adjustment decreases the reported value (motivates the B2500 to reduce feed-in,
 # allowing imports to rise); a positive adjustment increases it (motivates B2500 to increase feed-in).
 #
-# Error formula: error = −PID_SETPOINT − actual_power
-# This keeps the effective closed-loop gain at (1 − Kp) × Kb, identical to the original B2500
-# response, while converging in the correct direction (positive setpoint = grid import).
-# At Kp = 0.5 the P-only controller reaches the setpoint exactly in steady state.
+# Error formula: error = −actual_power
+# A positive grid import produces a negative error; the PID output opposes the import,
+# telling the B2500 to cover it.
 #
-# IMPORTANT: PID_KI must remain 0.  The error does not cross zero at actual == setpoint
-# (it equals −2 × setpoint), so a non-zero Ki causes the integral to accumulate indefinitely.
+# To keep a small safety buffer and avoid exporting to the grid, set a small negative
+# POWER_OFFSET (e.g. POWER_OFFSET = -20) in the filter chain before the PID.
 #
-# PID_KP: Proportional gain. 0.5 is the recommended value — it gives exact setpoint tracking
-#         in steady state with P-only control and the same stability margin as the B2500 alone.
+# PID_KP: Proportional gain. 0.5 is the recommended value.
 #         Must be < 1 to avoid instability.  Set to 0 to disable PID (default).
-# PID_KI: Keep at 0 (see note above).
+# PID_KI: Integral gain. Usually 0 — a non-zero Ki can cause windup if the load
+#         never crosses zero (e.g. a constant base load). Keep at 0 unless you
+#         understand the implications.
 # PID_KD: Derivative gain. Anticipates changes. Usually 0 (noisy readings amplify the D-term).
-# PID_SETPOINT: Target grid power in watts (positive = import from grid, negative = export).
-#               Default 0. Use 20–50 to maintain a small import safety buffer.
 # PID_OUTPUT_MAX: Maximum absolute PID output in watts. Should match B2500 max output (e.g. 800 or 1200).
 #                 Prevents integral windup. Default 800.
 # PID_MODE: "bias" — add PID output to the raw meter reading (recommended, the B2500 still sees
@@ -97,17 +95,17 @@ HOLD_TIME = 0
 # smooth the input signal.  This is the most effective way to prevent oscillation.
 #
 # Tuning guide (Method 1 — Manual Tuning):
-#   1. Enable smoothing first: EMA_ALPHA = 0.3, DEADBAND_WATTS = 20
-#   2. Start P-only: PID_KP = 0.5, PID_KI = 0, PID_KD = 0, PID_SETPOINT = 20
-#   3. Observe grid meter for 10–30 min.  The system should settle near 20 W import.
-#      If oscillating, reduce Kp slightly (e.g. 0.4).  If response is too slow, try 0.6.
-#   4. Keep PID_KI = 0.
+#   1. Set POWER_OFFSET = -20 to hold a 20 W import safety buffer.
+#   2. Enable smoothing: EMA_ALPHA = 0.3, DEADBAND_WATTS = 20
+#   3. Start P-only: PID_KP = 0.5, PID_KI = 0, PID_KD = 0
+#   4. Observe grid meter for 10–30 min.  If oscillating, reduce Kp (e.g. 0.4).
+#      If response is too slow, try 0.6.
+#   5. Keep PID_KI = 0 unless you are sure the load crosses zero regularly.
 #
 # Can be overridden per powermeter section
 PID_KP = 0
 PID_KI = 0
 PID_KD = 0
-PID_SETPOINT = 0
 PID_OUTPUT_MAX = 800
 PID_MODE = bias
 
@@ -135,7 +133,6 @@ PID_MODE = bias
 #PID_KP = 0
 #PID_KI = 0
 #PID_KD = 0
-#PID_SETPOINT = 0
 #PID_OUTPUT_MAX = 800
 #PID_MODE = bias
 

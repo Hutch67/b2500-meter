@@ -125,7 +125,6 @@ def read_all_powermeter_configs(
     global_pid_kp = safe_getfloat(config, "GENERAL", "PID_KP", fallback=0.0)
     global_pid_ki = safe_getfloat(config, "GENERAL", "PID_KI", fallback=0.0)
     global_pid_kd = safe_getfloat(config, "GENERAL", "PID_KD", fallback=0.0)
-    global_pid_setpoint = safe_getfloat(config, "GENERAL", "PID_SETPOINT", fallback=0.0)
     global_pid_output_max = safe_getfloat(
         config, "GENERAL", "PID_OUTPUT_MAX", fallback=800.0
     )
@@ -256,9 +255,6 @@ def read_all_powermeter_configs(
                 section_pid_kd = safe_getfloat(
                     config, section, "PID_KD", fallback=global_pid_kd
                 )
-                section_pid_setpoint = safe_getfloat(
-                    config, section, "PID_SETPOINT", fallback=global_pid_setpoint
-                )
                 section_pid_output_max = safe_getfloat(
                     config, section, "PID_OUTPUT_MAX", fallback=global_pid_output_max
                 )
@@ -270,7 +266,7 @@ def read_all_powermeter_configs(
                 print(
                     f"Applying {pid_source} PID controller "
                     f"(Kp={section_pid_kp}, Ki={section_pid_ki}, "
-                    f"Kd={section_pid_kd}, setpoint={section_pid_setpoint}W, "
+                    f"Kd={section_pid_kd}, "
                     f"max={section_pid_output_max}W, mode={section_pid_mode}) "
                     f"to {section}"
                 )
@@ -279,7 +275,6 @@ def read_all_powermeter_configs(
                     kp=section_pid_kp,
                     ki=section_pid_ki,
                     kd=section_pid_kd,
-                    setpoint=section_pid_setpoint,
                     output_max=section_pid_output_max,
                     mode=section_pid_mode,
                 )
