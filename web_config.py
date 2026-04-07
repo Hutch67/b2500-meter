@@ -568,10 +568,15 @@ function removeSection(btn) {
 function collectConfig() {
   const result = {};
   const order = [];
+  const seenSections = new Set();
   document.querySelectorAll('.section-card').forEach(card => {
     const nameInput = card.querySelector('.section-name-input');
     const sectionName = nameInput.value.trim();
     if (!sectionName) return;
+    if (seenSections.has(sectionName)) {
+      throw new Error('Duplicate section name: [' + sectionName + ']');
+    }
+    seenSections.add(sectionName);
     const pairs = {};
     card.querySelectorAll('.key-value-body tr').forEach(tr => {
       const key = tr.querySelector('.key-input').value.trim();
