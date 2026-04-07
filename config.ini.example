@@ -79,9 +79,10 @@ HOLD_TIME = 0
 #
 # PID_KP: Proportional gain. 0.5 is the recommended value.
 #         Must be < 1 to avoid instability.  Set to 0 to disable PID (default).
-# PID_KI: Integral gain. Usually 0 — a non-zero Ki can cause windup if the load
-#         never crosses zero (e.g. a constant base load). Keep at 0 unless you
-#         understand the implications.
+# PID_KI: Integral gain. Usually 0 — a non-zero Ki can cause windup during
+#         sustained imbalances or when the output is saturated.
+#         Keep at 0 unless you need to eliminate steady-state error and
+#         understand anti-windup behaviour.
 # PID_KD: Derivative gain. Anticipates changes. Usually 0 (noisy readings amplify the D-term).
 # PID_OUTPUT_MAX: Maximum absolute PID output in watts. Should match B2500 max output (e.g. 800 or 1200).
 #                 Prevents integral windup. Default 800.
@@ -100,7 +101,8 @@ HOLD_TIME = 0
 #   3. Start P-only: PID_KP = 0.5, PID_KI = 0, PID_KD = 0
 #   4. Observe grid meter for 10–30 min.  If oscillating, reduce Kp (e.g. 0.4).
 #      If response is too slow, try 0.6.
-#   5. Keep PID_KI = 0 unless you are sure the load crosses zero regularly.
+#   5. Keep PID_KI = 0 unless you need to eliminate steady-state error and
+#      understand anti-windup limitations.
 #
 # Can be overridden per powermeter section
 PID_KP = 0
