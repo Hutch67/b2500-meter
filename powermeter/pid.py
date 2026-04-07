@@ -96,14 +96,13 @@ class PidPowermeter(Powermeter):
         return self.wrapped_powermeter.wait_for_message(timeout)
 
     def get_powermeter_watts(self) -> List[float]:
-        raw_values = self.wrapped_powermeter.get_powermeter_watts()
-        current_time = time.monotonic()
-
-        # Compute error on the total power across all phases
-        total_power = sum(raw_values)
-        error = -total_power
-
         with self._lock:
+            raw_values = self.wrapped_powermeter.get_powermeter_watts()
+            current_time = time.monotonic()
+    
+            # Compute error on the total power across all phases
+            total_power = sum(raw_values)
+            error = -total_power
             if self._prev_time is None:
                 # First call — initialise state, no derivative yet
                 self._prev_error = error
