@@ -4,6 +4,8 @@ Web-based configuration editor for B2500 Meter.
 Provides helpers and an HTML page for reading and editing config.ini via a browser.
 """
 
+import tempfile
+import threading
 import configparser
 import json
 import os
@@ -733,6 +735,16 @@ def read_config_as_dict(config_path: str) -> Tuple[Dict, list]:
         order.append(section)
     return sections, order
 
+_CONFIG_WRITE_LOCK = threading.Lock()
+
+def _atomic_write_lines(config_path: str, lines: list) -> None:
+    dir_name = os.path.dirname(config_path) or "."
+    with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False) as tmp:
+        tmp.writelines(lines)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+        tmp_path = tmp.name
+    os.replace(tmp_path, config_path)
 
 def write_config_from_dict(config_path: str, sections: Dict, order: list) -> None:
     """
@@ -758,8 +770,8 @@ def write_config_from_dict(config_path: str, sections: Dict, order: list) -> Non
             for key, value in sections[section].items():
                 lines.append(f"{key} = {value}\n")
             lines.append("\n")
-        with open(config_path, "w") as f:
-            f.writelines(lines)
+          with _CONFIG_WRITE_LOCK:
+            _atomic_write_lines(config_path, lines)
         return
 
     with open(config_path, "r") as f:
@@ -845,7 +857,8 @@ def write_config_from_dict(config_path: str, sections: Dict, order: list) -> Non
 
     with open(config_path, "w") as f:
         f.writelines(output_lines)
-
+    with _CONFIG_WRITE_LOCK:
+        _atomic_write_lines(config_path, output_lines)
 
 def config_to_json(config_path: str) -> str:
     """Return the config as a JSON string suitable for the web UI."""
