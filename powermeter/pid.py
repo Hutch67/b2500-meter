@@ -18,6 +18,14 @@ class PidPowermeter(Powermeter):
     Positive PID output motivates the B2500 to increase feed-in power;
     negative output motivates it to decrease feed-in power.
 
+    **Gain sensitivity:** in ``mode="bias"`` the PID and the B2500's own
+    closed-loop controller act *together*.  The effective closed-loop gain
+    is ``(1 + Kp) × Kb``, where ``Kb`` is the B2500's internal gain.
+    This means gains that appear small can cause oscillation.  Start with
+    ``kp`` in the range 0.05–0.1 and increase slowly.  Use the integral
+    term to eliminate the residual steady-state error that P-only control
+    leaves (P-only converges to ``Kp/(1+Kp)`` of the setpoint).
+
     **Anti-windup** is built in: the integral term is clamped so that the
     total PID output never exceeds ``[−output_max, +output_max]``, and
     integration is paused while the output is saturated.
