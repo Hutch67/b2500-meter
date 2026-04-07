@@ -125,7 +125,7 @@ class PidPowermeter(Powermeter):
                 # Only accept the new integral if output is not saturated,
                 # or if the integral is moving toward zero (unwinding).
                 if abs(tentative_output) <= self.output_max or (
-                    tentative_integral * error < 0
+                    self._integral != 0 and self._integral * error < 0
                 ):
                     self._integral = tentative_integral
             i_term = self.ki * self._integral
