@@ -1,3 +1,4 @@
+import threading
 import time
 from typing import List, Optional
 from .base import Powermeter
@@ -44,26 +45,27 @@ class SlewRatePowermeter(Powermeter):
         return self.wrapped_powermeter.wait_for_message(timeout)
 
     def get_powermeter_watts(self) -> List[float]:
-        raw_values = self.wrapped_powermeter.get_powermeter_watts()
-        current_time = time.time()
-
-        if self.last_values is None or self.last_time is None:
-            # First reading – initialise without slewing
-            self.last_values = list(raw_values)
+        with self._lock:
+            raw_values = self.wrapped_powermeter.get_powermeter_watts()
+            current_time = time.time()
+    
+            if self.last_values is None or self.last_time is None:
+                # First reading – initialise without slewing
+                self.last_values = list(raw_values)
+                self.last_time = current_time
+                return list(raw_values)
+    
+            elapsed = current_time - self.last_time
+            max_change = self.slew_rate_watts_per_sec * elapsed
+    
+            slewed = []
+            for raw, last in zip(raw_values, self.last_values):
+                delta = raw - last
+                if abs(delta) <= max_change:
+                    slewed.append(raw)
+                else:
+                    slewed.append(last + max_change * (1.0 if delta > 0 else -1.0))
+    
+            self.last_values = slewed
             self.last_time = current_time
-            return list(raw_values)
-
-        elapsed = current_time - self.last_time
-        max_change = self.slew_rate_watts_per_sec * elapsed
-
-        slewed = []
-        for raw, last in zip(raw_values, self.last_values):
-            delta = raw - last
-            if abs(delta) <= max_change:
-                slewed.append(raw)
-            else:
-                slewed.append(last + max_change * (1.0 if delta > 0 else -1.0))
-
-        self.last_values = slewed
-        self.last_time = current_time
-        return list(slewed)
+            return list(slewed)
