@@ -48,6 +48,7 @@ def build_ct002_consumer_discovery(
     state_topic = f"{base_topic}/ct002/{device_id}/consumer/{consumer_id}"
     avail_topic = f"{state_topic}/availability"
     uid_prefix = f"astrameter_ct002_{safe_dev}_{safe_cid}"
+    meter_identifier = f"astrameter_ct002_{safe_dev}"
 
     components: dict[str, dict] = {}
 
@@ -194,6 +195,7 @@ def build_ct002_consumer_discovery(
         if device_type
         else f"AstraMeter Consumer {mac_slug}",
         "manufacturer": "Marstek",
+        "via_device": meter_identifier,
     }
     connections: list[list[str]] = []
     if re.fullmatch(r"[0-9a-f]{12}", mac_slug):
@@ -237,6 +239,7 @@ def build_ct002_device_discovery(
     base_topic: str,
     device_id: str,
     ha_prefix: str,
+    addon_slug: str | None = None,
 ) -> tuple[str, dict]:
     safe_dev = _sanitize_id(device_id)
     node_id = f"astrameter_ct002_{safe_dev}"
@@ -281,12 +284,16 @@ def build_ct002_device_discovery(
         },
     }
 
+    device_info: dict = {
+        "identifiers": node_id,
+        "name": f"AstraMeter CT002 {device_id}",
+        "manufacturer": "astrameter",
+    }
+    if addon_slug:
+        device_info["via_device"] = addon_slug
+
     payload = {
-        "device": {
-            "identifiers": node_id,
-            "name": f"CT002 {device_id}",
-            "manufacturer": "astrameter",
-        },
+        "device": device_info,
         "origin": _origin(),
         "components": components,
         "availability": [_system_availability(base_topic)],
@@ -372,8 +379,9 @@ def build_shelly_battery_discovery(
     payload = {
         "device": {
             "identifiers": node_id,
-            "name": f"Shelly Battery {battery_ip}",
+            "name": f"AstraMeter Shelly Battery {battery_ip}",
             "manufacturer": "astrameter",
+            "via_device": f"astrameter_shelly_{safe_dev}",
         },
         "origin": _origin(),
         "components": components,
@@ -400,6 +408,7 @@ def build_shelly_device_discovery(
     base_topic: str,
     device_id: str,
     ha_prefix: str,
+    addon_slug: str | None = None,
 ) -> tuple[str, dict]:
     safe_dev = _sanitize_id(device_id)
     node_id = f"astrameter_shelly_{safe_dev}"
@@ -417,12 +426,16 @@ def build_shelly_device_discovery(
         },
     }
 
+    device_info: dict = {
+        "identifiers": node_id,
+        "name": f"AstraMeter Shelly {device_id}",
+        "manufacturer": "astrameter",
+    }
+    if addon_slug:
+        device_info["via_device"] = addon_slug
+
     payload = {
-        "device": {
-            "identifiers": node_id,
-            "name": f"Shelly {device_id}",
-            "manufacturer": "astrameter",
-        },
+        "device": device_info,
         "origin": _origin(),
         "components": components,
         "availability": [_system_availability(base_topic)],

@@ -63,6 +63,7 @@ def test_ct002_consumer_discovery_structure():
     assert dev["manufacturer"] == "Marstek"
     assert dev["model_id"] == "HMJ-2"
     assert ["bluetooth", "AA:BB:CC:DD:EE:FF"] in dev["connections"]
+    assert dev["via_device"] == "astrameter_ct002_dev1"
 
     # Check two-level availability
     assert payload["availability_mode"] == "all"
@@ -125,11 +126,12 @@ def test_ct002_consumer_discovery_no_device_type():
 
 
 def test_ct002_consumer_discovery_non_mac_consumer():
-    """No connections field when consumer_id is not a 12-char hex MAC."""
+    """Non-MAC consumer_id has no connections but is still linked via via_device."""
     _, payload = build_ct002_consumer_discovery(
         "astrameter", "dev1", "192.168.1.1:12345", "homeassistant"
     )
     assert "connections" not in payload["device"]
+    assert payload["device"]["via_device"] == "astrameter_ct002_dev1"
 
 
 def test_ct002_consumer_discovery_network_mac_and_ip():
@@ -146,11 +148,16 @@ def test_ct002_consumer_discovery_network_mac_and_ip():
     assert ["bluetooth", "AA:BB:CC:DD:EE:FF"] in conns
     assert ["mac", "11:22:33:44:55:66"] in conns
     assert ["ip", "192.168.1.10"] in conns
+    assert payload["device"]["via_device"] == "astrameter_ct002_dev1"
 
 
 def test_ct002_device_discovery_structure():
-    topic, payload = build_ct002_device_discovery("astrameter", "dev1", "homeassistant")
+    topic, payload = build_ct002_device_discovery(
+        "astrameter", "dev1", "homeassistant", addon_slug="34dea19a_astrameter"
+    )
     _assert_discovery_structure(topic, payload)
+    assert "AstraMeter" in payload["device"]["name"]
+    assert payload["device"]["via_device"] == "34dea19a_astrameter"
     comps = payload["components"]
     assert "smooth_target" in comps
     assert "active_control" in comps
@@ -170,6 +177,8 @@ def test_shelly_battery_discovery_structure():
         "astrameter", "shelly1", "192.168.1.100", "homeassistant"
     )
     _assert_discovery_structure(topic, payload)
+    assert "AstraMeter" in payload["device"]["name"]
+    assert payload["device"]["via_device"] == "astrameter_shelly_shelly1"
     comps = payload["components"]
     assert "grid_power_total" in comps
     assert "active" in comps
@@ -184,10 +193,19 @@ def test_shelly_battery_discovery_structure():
 
 def test_shelly_device_discovery_structure():
     topic, payload = build_shelly_device_discovery(
-        "astrameter", "shelly1", "homeassistant"
+        "astrameter", "shelly1", "homeassistant", addon_slug="34dea19a_astrameter"
     )
     _assert_discovery_structure(topic, payload)
+    assert "AstraMeter" in payload["device"]["name"]
+    assert payload["device"]["via_device"] == "34dea19a_astrameter"
     assert "battery_count" in payload["components"]
+
+
+def test_meter_device_discovery_omits_via_device_without_addon_slug():
+    _, ct002 = build_ct002_device_discovery("astrameter", "dev1", "homeassistant")
+    assert "via_device" not in ct002["device"]
+    _, shelly = build_shelly_device_discovery("astrameter", "shelly1", "homeassistant")
+    assert "via_device" not in shelly["device"]
 
 
 def test_unique_ids_are_unique():
@@ -288,6 +306,7 @@ TLS = true
 BASE_TOPIC = my_topic
 HA_DISCOVERY = true
 HA_DISCOVERY_PREFIX = ha
+ADDON_SLUG = 34dea19a_astrameter
 """
     )
     result = read_mqtt_insights_config(cfg)
@@ -300,6 +319,7 @@ HA_DISCOVERY_PREFIX = ha
     assert result.base_topic == "my_topic"
     assert result.ha_discovery is True
     assert result.ha_discovery_prefix == "ha"
+    assert result.addon_slug == "34dea19a_astrameter"
 
 
 def test_read_mqtt_insights_config_defaults():
@@ -317,6 +337,7 @@ BROKER = localhost
     assert result.base_topic == "astrameter"
     assert result.ha_discovery is True
     assert result.ha_discovery_prefix == "homeassistant"
+    assert result.addon_slug is None
 
 
 def test_read_mqtt_insights_config_empty_values():
@@ -332,6 +353,7 @@ TLS =
 BASE_TOPIC =
 HA_DISCOVERY =
 HA_DISCOVERY_PREFIX =
+ADDON_SLUG =
 """
     )
     result = read_mqtt_insights_config(cfg)
@@ -344,6 +366,18 @@ HA_DISCOVERY_PREFIX =
     assert result.base_topic == "astrameter"
     assert result.ha_discovery is True
     assert result.ha_discovery_prefix == "homeassistant"
+    assert result.addon_slug is None
+
+
+def test_read_mqtt_insights_config_whitespace_addon_slug():
+    """Whitespace-only ADDON_SLUG values must be normalised to None."""
+    cfg = configparser.ConfigParser()
+    cfg.add_section("MQTT_INSIGHTS")
+    cfg.set("MQTT_INSIGHTS", "BROKER", "localhost")
+    cfg.set("MQTT_INSIGHTS", "ADDON_SLUG", "   ")
+    result = read_mqtt_insights_config(cfg)
+    assert result is not None
+    assert result.addon_slug is None
 
 
 def test_read_mqtt_insights_config_absent():
