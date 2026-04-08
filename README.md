@@ -362,8 +362,8 @@ You can optionally layer a PID (Proportional-Integral-Derivative) controller on 
 
 **How it works:**
 
-- `mode = bias` (default) — adds the PID output to the raw meter reading. The storage device's own closed-loop controller still acts, so the effective gain is `(1 − Kp) × Kb` where `Kb` is the device's internal gain. Use `0 < Kp < 1`; `Kp = 0.5` is the recommended starting point.
-- `mode = replace` — uses only the PID output as the reported value, bypassing the device's own loop entirely.
+- `PID_MODE = bias` (default) — adds the PID output to the raw meter reading. The storage device's own closed-loop controller still acts, so the effective gain is `(1 − Kp) × Kb` where `Kb` is the device's internal gain. Use `0 < Kp < 1`; `Kp = 0.5` is the recommended starting point.
+- `PID_MODE = replace` — uses only the PID output as the reported value, bypassing the device's own loop entirely.
 
 **Anti-windup** is built in: the integral term is clamped so that the total PID output never exceeds `±PID_OUTPUT_MAX`, and accumulation pauses while the output is saturated.
 
