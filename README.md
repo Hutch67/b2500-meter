@@ -356,6 +356,39 @@ POWER_MULTIPLIER = 1,0,1
 
 **Note:** Transforms are applied when readings are taken from the powermeter, before values are passed to the emulated device (Shelly, CT002/CT003, etc.).
 
+### PID Controller
+
+You can optionally layer a PID (Proportional-Integral-Derivative) controller on top of any powermeter. The controller uses the grid power reading as its process variable and steers the reported value toward zero (net-zero grid exchange). This creates a second, software-level closed loop that can accelerate convergence or compensate for slow storage device response.
+
+**How it works:**
+
+- `mode = bias` (default) — adds the PID output to the raw meter reading. The storage device's own closed-loop controller still acts, so the effective gain is `(1 − Kp) × Kb` where `Kb` is the device's internal gain. Use `0 < Kp < 1`; `Kp = 0.5` is the recommended starting point.
+- `mode = replace` — uses only the PID output as the reported value, bypassing the device's own loop entirely.
+
+**Anti-windup** is built in: the integral term is clamped so that the total PID output never exceeds `±PID_OUTPUT_MAX`, and accumulation pauses while the output is saturated.
+
+All parameters can be set globally in `[GENERAL]` or per powermeter section (per-section values override the global ones):
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `PID_KP` | Proportional gain. Set > 0 to enable the PID. | `0` (disabled) |
+| `PID_KI` | Integral gain. Usually not needed; risks windup. | `0` |
+| `PID_KD` | Derivative gain. Noisy on real meters; leave at 0. | `0` |
+| `PID_OUTPUT_MAX` | Maximum absolute PID output in watts. | `800` |
+| `PID_MODE` | `bias` or `replace`. | `bias` |
+
+For a small import safety buffer that prevents accidental export, combine with a negative `POWER_OFFSET` (applied before the PID):
+
+```ini
+[SHELLY]
+TYPE = 1PM
+IP = 192.168.1.100
+POWER_OFFSET = -20     # 20 W safety buffer toward import
+PID_KP = 0.5
+PID_OUTPUT_MAX = 800
+PID_MODE = bias
+```
+
 ### Shelly
 
 #### Shelly 1PM
