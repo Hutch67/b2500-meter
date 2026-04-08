@@ -122,11 +122,17 @@ class PidPowermeter(Powermeter):
             # --- Proportional ---
             p_term = self.kp * error
 
+            # --- Derivative ---
+            if dt > 0 and self._prev_error is not None:
+                d_term = self.kd * (error - self._prev_error) / dt
+            else:
+                d_term = 0.0
+
             # --- Integral with anti-windup ---
             if dt > 0:
                 # Tentatively accumulate
                 tentative_integral = self._integral + error * dt
-                tentative_output = p_term + self.ki * tentative_integral
+                tentative_output = p_term + self.ki * tentative_integral + d_term
                 # Only accept the new integral if output is not saturated,
                 # or if the integral is moving toward zero (unwinding).
                 if abs(tentative_output) <= self.output_max or (
@@ -134,12 +140,6 @@ class PidPowermeter(Powermeter):
                 ):
                     self._integral = tentative_integral
             i_term = self.ki * self._integral
-
-            # --- Derivative ---
-            if dt > 0 and self._prev_error is not None:
-                d_term = self.kd * (error - self._prev_error) / dt
-            else:
-                d_term = 0.0
 
             self._prev_error = error
             self._prev_time = current_time
