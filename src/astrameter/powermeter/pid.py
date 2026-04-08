@@ -96,12 +96,15 @@ class PidPowermeter(Powermeter):
         return await self.wrapped_powermeter.wait_for_message(timeout)
 
     async def start(self):
+        """Pass through to wrapped powermeter."""
         await self.wrapped_powermeter.start()
 
     async def stop(self):
+        """Pass through to wrapped powermeter."""
         await self.wrapped_powermeter.stop()
 
     async def get_powermeter_watts(self) -> list[float]:
+        """Return PID-adjusted power readings for each phase."""
         async with self._lock:
             raw_values = await self.wrapped_powermeter.get_powermeter_watts()
             current_time = time.monotonic()

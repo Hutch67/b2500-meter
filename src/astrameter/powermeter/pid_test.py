@@ -7,6 +7,7 @@ from .pid import PidPowermeter
 
 @pytest.fixture
 def mock_powermeter():
+    """Return a mock powermeter with async stubs for all interface methods."""
     pm = Mock()
     pm.get_powermeter_watts = AsyncMock()
     pm.wait_for_message = AsyncMock()
