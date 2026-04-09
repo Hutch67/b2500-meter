@@ -314,7 +314,13 @@ async def async_main(
     if cfg.getboolean("GENERAL", "ENABLE_HEALTH_CHECK", fallback=True):
         logger.info("Starting health check service...")
         try:
-            health = HealthCheckService()
+            enable_web_config = cfg.getboolean(
+                "GENERAL", "WEB_CONFIG_ENABLED", fallback=False
+            )
+            health = HealthCheckService(
+                config_path=args.config,
+                enable_web_config=enable_web_config,
+            )
             if await health.start():
                 logger.info("Health check service started successfully")
             else:
