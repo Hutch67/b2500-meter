@@ -746,10 +746,19 @@ _CONFIG_WRITE_LOCK = threading.Lock()
 def _atomic_write_lines(config_path: str, lines: list) -> None:
     """Write *lines* to *config_path* atomically via a temp-file + os.replace.
 
-    On overlayfs / bind-mount environments (e.g. Home Assistant add-ons) the
-    kernel returns EBUSY for rename(2) on a bind-mounted destination.  In that
-    case we fall back to an in-place overwrite: copy the temp file content into
-    the existing file, then remove the temp file.
+    Container environments (Docker bind-mounts, overlayfs) can block rename(2)
+    with EBUSY/EACCES even when the file is otherwise writable.  Two fallbacks
+    are tried in order:
+
+    1. ``shutil.copyfile`` — overwrites the destination in-place.  Handles the
+       common Docker bind-mount case where rename is blocked but the file is
+       open-for-write accessible.
+    2. ``os.unlink`` + ``os.replace`` — removes the destination first (creating
+       an overlayfs whiteout), then renames the temp file into place.  Handles
+       overlayfs setups where the file lives only in the read-only lower layer.
+
+    If all strategies fail a :exc:`PermissionError` is raised with an
+    actionable message.
     """
     dir_name = os.path.dirname(config_path) or "."
     with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False) as tmp:
