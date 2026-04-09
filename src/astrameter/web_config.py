@@ -757,14 +757,20 @@ def _atomic_write_lines(config_path: str, lines: list) -> None:
         tmp.flush()
         os.fsync(tmp.fileno())
         tmp_path = tmp.name
+    # errno values that indicate a filesystem/mount restriction rather than a
+    # genuine logic error.  EBUSY = mount point, EPERM/EACCES = permission
+    # denied (different kernels/filesystems use different codes for the same
+    # bind-mount restriction).
+    _RETRYABLE = (errno.EBUSY, errno.EPERM, errno.EACCES)
+
     try:
         os.replace(tmp_path, config_path)
         return
     except OSError as exc:
-        if exc.errno not in (errno.EBUSY, errno.EPERM):
+        if exc.errno not in _RETRYABLE:
             raise
 
-    # rename(2) returned EBUSY/EPERM — common on overlayfs/bind-mount setups.
+    # rename(2) was blocked — common on Docker bind-mounts and overlayfs.
     # Try strategies in order, stopping as soon as one succeeds.
     transferred = False
     try:
@@ -773,18 +779,18 @@ def _atomic_write_lines(config_path: str, lines: list) -> None:
             shutil.copyfile(tmp_path, config_path)
             transferred = True
         except OSError as exc2:
-            if exc2.errno != errno.EPERM:
+            if exc2.errno not in _RETRYABLE:
                 raise
         # Strategy 2: unlink the bind-mounted file then rename the temp file.
-        # Works on overlayfs where the destination file cannot be opened for
-        # writing but can be removed (a whiteout is created in the upper layer).
+        # Works on overlayfs where the destination cannot be opened for writing
+        # but can be removed (a whiteout is created in the upper layer).
         if not transferred:
             try:
                 os.unlink(config_path)
                 os.replace(tmp_path, config_path)
                 transferred = True
             except OSError as exc3:
-                if exc3.errno != errno.EPERM:
+                if exc3.errno not in _RETRYABLE:
                     raise
         if not transferred:
             raise PermissionError(
