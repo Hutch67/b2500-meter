@@ -770,7 +770,7 @@ def write_config_from_dict(config_path: str, sections: Dict, order: list) -> Non
             for key, value in sections[section].items():
                 lines.append(f"{key} = {value}\n")
             lines.append("\n")
-          with _CONFIG_WRITE_LOCK:
+        with _CONFIG_WRITE_LOCK:
             _atomic_write_lines(config_path, lines)
         return
 
