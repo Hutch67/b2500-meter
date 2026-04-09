@@ -5,8 +5,11 @@ Provides helpers and an HTML page for reading and editing config.ini via a brows
 """
 
 import configparser
+import contextlib
+import errno
 import json
 import os
+import shutil
 import tempfile
 import threading
 from collections import OrderedDict
@@ -741,14 +744,30 @@ _CONFIG_WRITE_LOCK = threading.Lock()
 
 
 def _atomic_write_lines(config_path: str, lines: list) -> None:
-    """Write *lines* to *config_path* atomically via a temp-file + os.replace."""
+    """Write *lines* to *config_path* atomically via a temp-file + os.replace.
+
+    On overlayfs / bind-mount environments (e.g. Home Assistant add-ons) the
+    kernel returns EBUSY for rename(2) on a bind-mounted destination.  In that
+    case we fall back to an in-place overwrite: copy the temp file content into
+    the existing file, then remove the temp file.
+    """
     dir_name = os.path.dirname(config_path) or "."
     with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False) as tmp:
         tmp.writelines(lines)
         tmp.flush()
         os.fsync(tmp.fileno())
         tmp_path = tmp.name
-    os.replace(tmp_path, config_path)
+    try:
+        os.replace(tmp_path, config_path)
+    except OSError as exc:
+        if exc.errno != errno.EBUSY:
+            raise
+        # EBUSY on overlayfs/bind-mount: fall back to copy-then-remove.
+        try:
+            shutil.copyfile(tmp_path, config_path)
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
 
 
 def write_config_from_dict(config_path: str, sections: dict, order: list) -> None:
