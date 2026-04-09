@@ -779,9 +779,19 @@ def _atomic_write_lines(config_path: str, lines: list) -> None:
         # Works on overlayfs where the destination file cannot be opened for
         # writing but can be removed (a whiteout is created in the upper layer).
         if not transferred:
-            os.unlink(config_path)
-            os.replace(tmp_path, config_path)
-            transferred = True
+            try:
+                os.unlink(config_path)
+                os.replace(tmp_path, config_path)
+                transferred = True
+            except OSError as exc3:
+                if exc3.errno != errno.EPERM:
+                    raise
+        if not transferred:
+            raise PermissionError(
+                f"Cannot write to {config_path!r}: the file is not writable. "
+                "Check that the add-on has write access to the config file "
+                "(e.g. the mapped volume is not read-only)."
+            )
     finally:
         if not transferred:
             with contextlib.suppress(OSError):
