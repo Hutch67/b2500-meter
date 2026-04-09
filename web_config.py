@@ -744,7 +744,20 @@ def _atomic_write_lines(config_path: str, lines: list) -> None:
         tmp.flush()
         os.fsync(tmp.fileno())
         tmp_path = tmp.name
-    os.replace(tmp_path, config_path)
+    try:
+        os.replace(tmp_path, config_path)
+    except OSError:
+        # Fallback for bind-mounted files (e.g. Docker) where os.replace fails
+        # because the tmp file and the target are on different filesystems or the
+        # mount point marks the inode busy.
+        try:
+            with open(tmp_path, "r") as src, open(config_path, "w") as dst:
+                dst.writelines(src.readlines())
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 def write_config_from_dict(config_path: str, sections: Dict, order: list) -> None:
     """
