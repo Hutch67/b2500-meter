@@ -760,9 +760,9 @@ def _atomic_write_lines(config_path: str, lines: list) -> None:
     try:
         os.replace(tmp_path, config_path)
     except OSError as exc:
-        if exc.errno != errno.EBUSY:
+        if exc.errno not in (errno.EBUSY, errno.EPERM):
             raise
-        # EBUSY on overlayfs/bind-mount: fall back to copy-then-remove.
+        # EBUSY/EPERM on overlayfs/bind-mount: fall back to copy-then-remove.
         try:
             shutil.copyfile(tmp_path, config_path)
         finally:
