@@ -198,20 +198,6 @@ def read_all_powermeter_configs(
                 )
                 powermeter = SlewRatePowermeter(powermeter, section_slew_rate)
 
-            section_deadband_watts = safe_getfloat(
-                config, section, "DEADBAND_WATTS", fallback=global_deadband_watts
-            )
-            if section_deadband_watts > 0:
-                deadband_source = (
-                    "section-specific"
-                    if config.has_option(section, "DEADBAND_WATTS")
-                    else "global"
-                )
-                print(
-                    f"Applying {deadband_source} dead-band filter ({section_deadband_watts} W) to {section}"
-                )
-                powermeter = DeadBandPowermeter(powermeter, section_deadband_watts)
-
             section_hold_time = safe_getfloat(
                 config, section, "HOLD_TIME", fallback=global_hold_time
             )
@@ -239,6 +225,20 @@ def read_all_powermeter_configs(
                     f"Applying {offset_source} power offset ({section_power_offset}W) to {section}"
                 )
                 powermeter = OffsetPowermeter(powermeter, offset=section_power_offset)
+
+            section_deadband_watts = safe_getfloat(
+                config, section, "DEADBAND_WATTS", fallback=global_deadband_watts
+            )
+            if section_deadband_watts > 0:
+                deadband_source = (
+                    "section-specific"
+                    if config.has_option(section, "DEADBAND_WATTS")
+                    else "global"
+                )
+                print(
+                    f"Applying {deadband_source} dead-band filter ({section_deadband_watts} W) to {section}"
+                )
+                powermeter = DeadBandPowermeter(powermeter, section_deadband_watts)
 
             section_pid_kp = safe_getfloat(
                 config, section, "PID_KP", fallback=global_pid_kp
