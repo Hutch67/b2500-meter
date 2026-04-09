@@ -565,10 +565,14 @@ function collectConfig() {
   const result = {};
   const order = [];
   const seenSections = new Set();
+  let hasEmptySection = false;
   document.querySelectorAll('.section-card').forEach(card => {
     const nameInput = card.querySelector('.section-name-input');
     const sectionName = nameInput.value.trim();
-    if (!sectionName) return;
+    if (!sectionName) {
+      hasEmptySection = true;
+      return;
+    }
     if (seenSections.has(sectionName)) {
       throw new Error('Duplicate section name: [' + sectionName + ']');
     }
@@ -582,6 +586,9 @@ function collectConfig() {
     result[sectionName] = pairs;
     order.push(sectionName);
   });
+  if (hasEmptySection) {
+    throw new Error('One or more sections have no name — fill in the section name or remove the section before saving.');
+  }
   return { sections: result, order };
 }
 
