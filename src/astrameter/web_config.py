@@ -759,13 +759,31 @@ def _atomic_write_lines(config_path: str, lines: list) -> None:
         tmp_path = tmp.name
     try:
         os.replace(tmp_path, config_path)
+        return
     except OSError as exc:
         if exc.errno not in (errno.EBUSY, errno.EPERM):
             raise
-        # EBUSY/EPERM on overlayfs/bind-mount: fall back to copy-then-remove.
+
+    # rename(2) returned EBUSY/EPERM — common on overlayfs/bind-mount setups.
+    # Try strategies in order, stopping as soon as one succeeds.
+    transferred = False
+    try:
+        # Strategy 1: overwrite in-place (open destination for writing).
         try:
             shutil.copyfile(tmp_path, config_path)
-        finally:
+            transferred = True
+        except OSError as exc2:
+            if exc2.errno != errno.EPERM:
+                raise
+        # Strategy 2: unlink the bind-mounted file then rename the temp file.
+        # Works on overlayfs where the destination file cannot be opened for
+        # writing but can be removed (a whiteout is created in the upper layer).
+        if not transferred:
+            os.unlink(config_path)
+            os.replace(tmp_path, config_path)
+            transferred = True
+    finally:
+        if not transferred:
             with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
 
