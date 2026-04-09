@@ -734,6 +734,7 @@ _CONFIG_WRITE_LOCK = threading.Lock()
 
 
 def _atomic_write_lines(config_path: str, lines: list) -> None:
+    """Write *lines* to *config_path* atomically via a temp-file + os.replace."""
     dir_name = os.path.dirname(config_path) or "."
     with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False) as tmp:
         tmp.writelines(lines)

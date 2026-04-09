@@ -19,6 +19,7 @@ from astrameter.version_info import get_git_commit_sha
 
 
 def _health_json_bytes():
+    """Return the JSON health-check response body as UTF-8 bytes."""
     payload = {"status": "healthy", "service": "astrameter"}
     sha = get_git_commit_sha()
     if sha:
@@ -36,6 +37,7 @@ class HealthCheckService:
         config_path: str | None = None,
         enable_web_config: bool = False,
     ):
+        """Initialise the service; call ``start()`` to bind the port."""
         self.port = port
         self.bind_address = bind_address
         self.config_path = config_path
@@ -43,6 +45,7 @@ class HealthCheckService:
         self._runner = None
 
     async def start(self):
+        """Bind the TCP port and start serving. Returns True on success, False on failure."""
         app = web.Application()
         # aiohttp auto-handles HEAD for GET routes.
         for path in ("/health", "/health/", "/api", "/api/"):
@@ -84,15 +87,18 @@ class HealthCheckService:
         return True
 
     async def stop(self):
+        """Tear down the aiohttp runner and release the port."""
         if self._runner:
             await self._runner.cleanup()
             self._runner = None
             logger.info("Health check service stopped")
 
     def is_running(self):
+        """Return True if the HTTP server is currently running."""
         return self._runner is not None
 
     async def _handle_health(self, request):
+        """Respond to GET /health and /api with a JSON healthy status."""
         logger.debug(
             "Health check request received from %s",
             request.remote,
@@ -104,6 +110,7 @@ class HealthCheckService:
         )
 
     async def _handle_config_ui(self, request):
+        """Serve the HTML configuration editor at GET /config."""
         from astrameter.web_config import CONFIG_EDITOR_HTML
 
         return web.Response(
@@ -113,6 +120,7 @@ class HealthCheckService:
         )
 
     async def _handle_api_config_get(self, request):
+        """Return the current config.ini contents as JSON at GET /api/config."""
         from astrameter.web_config import config_to_json
 
         if not self.config_path:
@@ -137,6 +145,7 @@ class HealthCheckService:
             )
 
     async def _handle_api_config_post(self, request):
+        """Write updated config sections from the JSON body at POST /api/config."""
         from astrameter.web_config import write_config_from_dict
 
         if not self.config_path:
@@ -164,6 +173,7 @@ class HealthCheckService:
             )
 
     async def _handle_api_restart(self, request):
+        """Acknowledge POST /api/restart and schedule an immediate process exit."""
         response = web.Response(
             body=json.dumps(
                 {"success": True, "message": "Service is restarting..."}
@@ -175,6 +185,7 @@ class HealthCheckService:
         return response
 
     async def _handle_not_found(self, request):
+        """Return a 404 JSON response for any unmatched route."""
         return web.Response(
             body=b'{"error": "Not Found"}',
             status=404,
