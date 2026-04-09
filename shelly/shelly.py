@@ -111,6 +111,7 @@ class Shelly:
                 response_data = response_json.encode()
                 with self._send_lock:
                     sock.sendto(response_data, addr)
+                logger.info(f"Sent to {addr[0]}: {powers}")
         except json.JSONDecodeError:
             logger.error("Error: Invalid JSON")
         except Exception as e:
