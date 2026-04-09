@@ -226,20 +226,6 @@ def read_all_powermeter_configs(
                 )
                 powermeter = OffsetPowermeter(powermeter, offset=section_power_offset)
 
-            section_deadband_watts = safe_getfloat(
-                config, section, "DEADBAND_WATTS", fallback=global_deadband_watts
-            )
-            if section_deadband_watts > 0:
-                deadband_source = (
-                    "section-specific"
-                    if config.has_option(section, "DEADBAND_WATTS")
-                    else "global"
-                )
-                print(
-                    f"Applying {deadband_source} dead-band filter ({section_deadband_watts} W) to {section}"
-                )
-                powermeter = DeadBandPowermeter(powermeter, section_deadband_watts)
-
             section_pid_kp = safe_getfloat(
                 config, section, "PID_KP", fallback=global_pid_kp
             )
@@ -278,6 +264,20 @@ def read_all_powermeter_configs(
                     output_max=section_pid_output_max,
                     mode=section_pid_mode,
                 )
+
+            section_deadband_watts = safe_getfloat(
+                config, section, "DEADBAND_WATTS", fallback=global_deadband_watts
+            )
+            if section_deadband_watts > 0:
+                deadband_source = (
+                    "section-specific"
+                    if config.has_option(section, "DEADBAND_WATTS")
+                    else "global"
+                )
+                print(
+                    f"Applying {deadband_source} dead-band filter ({section_deadband_watts} W) to {section}"
+                )
+                powermeter = DeadBandPowermeter(powermeter, section_deadband_watts)
 
             client_filter = create_client_filter(section, config)
             powermeters.append((powermeter, client_filter))
