@@ -584,7 +584,12 @@ function collectConfig() {
     card.querySelectorAll('.key-value-body tr').forEach(tr => {
       const key = tr.querySelector('.key-input').value.trim();
       const val = tr.querySelector('.val-input').value.trim();
-      if (key) pairs[key] = val;
+      if (key) {
+        if (key in pairs) {
+          throw new Error('Duplicate key "' + key + '" in section [' + sectionName + ']');
+        }
+        pairs[key] = val;
+      }
     });
     result[sectionName] = pairs;
     order.push(sectionName);
@@ -786,6 +791,8 @@ def _atomic_write_lines(config_path: str, lines: list) -> None:
         # Strategy 1: overwrite in-place (open destination for writing).
         try:
             shutil.copyfile(tmp_path, config_path)
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
             transferred = True
         except OSError as exc2:
             if exc2.errno not in _RETRYABLE:
