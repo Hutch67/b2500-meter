@@ -39,6 +39,7 @@ class SlewRatePowermeter(Powermeter):
         self.slew_rate_watts_per_sec = slew_rate_watts_per_sec
         self.last_values: Optional[List[float]] = None
         self.last_time: Optional[float] = None
+        self._lock = threading.Lock()
 
     def wait_for_message(self, timeout=5):
         """Pass through to wrapped powermeter."""

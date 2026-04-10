@@ -139,7 +139,7 @@ class CT001:
                         try:
                             conn.send(message.encode())
                             last_send_time = current_time
-                            logger.debug(f"Sent message to {addr}: {message}")
+                            logger.info(f"Sent to {addr[0]}: {message}")
                             if self.after_send:
                                 self.after_send(addr)
 
