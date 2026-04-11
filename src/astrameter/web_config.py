@@ -796,12 +796,15 @@ def _atomic_write_lines(config_path: str, lines: list) -> None:
     # rename(2) was blocked — common on Docker bind-mounts and overlayfs.
     # Try strategies in order, stopping as soon as one succeeds.
     transferred = False
+    # temp_consumed tracks whether os.replace() has moved the temp file into
+    # place (consuming it).  Strategy 1 (copyfile) leaves the temp file on disk
+    # and lets the finally block remove it; Strategy 2 (unlink+replace) renames
+    # the temp file, so the finally block must skip the unlink.
+    temp_consumed = False
     try:
         # Strategy 1: overwrite in-place (open destination for writing).
         try:
             shutil.copyfile(tmp_path, config_path)
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_path)
             transferred = True
         except OSError as exc2:
             if exc2.errno not in _RETRYABLE:
@@ -813,6 +816,7 @@ def _atomic_write_lines(config_path: str, lines: list) -> None:
             try:
                 os.unlink(config_path)
                 os.replace(tmp_path, config_path)
+                temp_consumed = True
                 transferred = True
             except OSError as exc3:
                 if exc3.errno not in _RETRYABLE:
@@ -824,7 +828,7 @@ def _atomic_write_lines(config_path: str, lines: list) -> None:
                 "(e.g. the mapped volume is not read-only)."
             )
     finally:
-        if not transferred:
+        if not temp_consumed:
             with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
 
