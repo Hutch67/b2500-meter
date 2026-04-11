@@ -80,9 +80,12 @@ class HealthCheckService:
 
         logger.info(f"Health check service started on {self.bind_address}:{self.port}")
         if self.enable_web_config and self.config_path:
+            logger.warning(
+                "Config editor is ENABLED — unauthenticated read/write access is active. "
+                "Disable WEB_CONFIG_ENABLED when not in use."
+            )
             logger.info(
-                f"Config editor enabled — accessible at "
-                f"http://{self.bind_address}:{self.port}/config"
+                f"Config editor accessible at http://{self.bind_address}:{self.port}/config"
             )
         return True
 
@@ -136,10 +139,10 @@ class HealthCheckService:
                 content_type="application/json",
                 headers={"Cache-Control": "no-cache"},
             )
-        except Exception as e:
-            logger.error(f"Error reading config: {e}")
+        except Exception:
+            logger.exception("Error reading config")
             return web.Response(
-                body=json.dumps({"error": str(e)}).encode(),
+                body=json.dumps({"error": "Internal server error"}).encode(),
                 status=500,
                 content_type="application/json",
             )
@@ -164,10 +167,17 @@ class HealthCheckService:
                 body=json.dumps({"success": True}).encode(),
                 content_type="application/json",
             )
-        except Exception as e:
-            logger.error(f"Error saving config: {e}")
+        except (ValueError, json.JSONDecodeError) as e:
+            logger.error("Invalid config request: %s", e)
             return web.Response(
-                body=json.dumps({"error": str(e)}).encode(),
+                body=json.dumps({"error": "Invalid request"}).encode(),
+                status=400,
+                content_type="application/json",
+            )
+        except Exception:
+            logger.exception("Error saving config")
+            return web.Response(
+                body=json.dumps({"error": "Internal server error"}).encode(),
                 status=500,
                 content_type="application/json",
             )
