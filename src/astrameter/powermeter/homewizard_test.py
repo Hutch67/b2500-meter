@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import ssl
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -171,6 +172,69 @@ async def test_get_watts_returns_copy():
     result = await pm.get_powermeter_watts()
     result.append(999)
     assert await pm.get_powermeter_watts() == [100]
+
+
+# --- Category D2: Staleness detection ---------------------------------------
+
+
+class _FakeClock:
+    def __init__(self, start: float = 0.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+async def test_get_watts_raises_when_measurement_is_stale():
+    """Staleness regression (matches the production lockup):  a
+    push-based powermeter whose WebSocket has silently half-opened
+    must surface an error to the caller instead of serving stale
+    values forever.
+    """
+    clock = _FakeClock()
+    pm = _create_powermeter(max_measurement_age_seconds=30.0, clock=clock)
+
+    # First measurement arrives at t=0.
+    pm._handle_measurement({"power_w": 100})
+    assert await pm.get_powermeter_watts() == [100]
+
+    # 29 s later: still fresh.
+    clock.advance(29.0)
+    assert await pm.get_powermeter_watts() == [100]
+
+    # 31 s past the last measurement: must raise.
+    clock.advance(2.0)
+    with pytest.raises(ValueError, match="stale"):
+        await pm.get_powermeter_watts()
+
+
+async def test_get_watts_staleness_disabled_when_max_age_is_zero():
+    """A zero ``max_measurement_age_seconds`` disables the age check
+    entirely — intended escape hatch for anyone with a dongle that
+    genuinely updates very slowly.
+    """
+    clock = _FakeClock()
+    pm = _create_powermeter(max_measurement_age_seconds=0.0, clock=clock)
+    pm._handle_measurement({"power_w": 100})
+    clock.advance(100000.0)
+    assert await pm.get_powermeter_watts() == [100]
+
+
+async def test_fresh_measurement_clears_staleness():
+    """A new measurement after a long silence must reset the age clock."""
+    clock = _FakeClock()
+    pm = _create_powermeter(max_measurement_age_seconds=30.0, clock=clock)
+    pm._handle_measurement({"power_w": 100})
+
+    clock.advance(50.0)
+    with pytest.raises(ValueError, match="stale"):
+        await pm.get_powermeter_watts()
+
+    pm._handle_measurement({"power_w": 250})
+    assert await pm.get_powermeter_watts() == [250]
 
 
 # --- Category E: wait_for_message ---
@@ -347,6 +411,94 @@ async def test_ws_loop_reconnects_after_disconnect():
         await pm._ws_loop()
 
     assert call_count == 2
+
+
+async def test_ws_loop_passes_heartbeat_to_ws_connect():
+    """The WebSocket must be opened with a heartbeat so aiohttp will
+    detect half-open connections via ping/pong timeouts."""
+    pm = _create_powermeter()
+    pm._session = MagicMock(spec=aiohttp.ClientSession)
+
+    captured_kwargs: dict = {}
+    call_count = 0
+
+    def fake_ws_connect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        captured_kwargs.update(kwargs)
+        raise asyncio.CancelledError
+
+    pm._session.ws_connect = fake_ws_connect
+
+    with (
+        patch("astrameter.powermeter.homewizard.asyncio.sleep", new_callable=AsyncMock),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await pm._ws_loop()
+
+    assert call_count == 1
+    assert "heartbeat" in captured_kwargs, (
+        "ws_connect must be called with a heartbeat kwarg"
+    )
+    assert captured_kwargs["heartbeat"] > 0, (
+        f"heartbeat must be a positive number, got {captured_kwargs['heartbeat']!r}"
+    )
+
+
+async def test_measurement_watchdog_closes_ws_on_timeout():
+    """Regression: when the WebSocket is alive (no transport error)
+    but the measurement stream has stalled, the watchdog must force
+    a close so ``ws_loop`` drops through to the reconnect branch.
+
+    Instead of patching ``asyncio.wait_for`` we drive the real one
+    with a tiny timeout via a monkey-patched constant — that way
+    the test exercises the ``TimeoutError`` path through the actual
+    event machinery rather than a mock.
+    """
+    pm = _create_powermeter()
+    ws = AsyncMock()
+
+    # Patch the module constant to effectively 0 so ``wait_for``
+    # times out immediately (no measurement has arrived).
+    with patch("astrameter.powermeter.homewizard.WATCHDOG_TIMEOUT_SECONDS", 0.01):
+        await pm._measurement_watchdog(ws)
+
+    ws.close.assert_called_once()
+
+
+async def test_measurement_watchdog_re_arms_after_each_measurement():
+    """The watchdog clears its event on every iteration so a single
+    early measurement cannot appease it forever — the timer must
+    restart from zero every time.  This test drives the real event
+    primitives: set the fresh-measurement event repeatedly for two
+    iterations, then stop — the next iteration must timeout.
+    """
+    pm = _create_powermeter()
+    ws = AsyncMock()
+
+    iterations = 0
+
+    async def set_event_twice_then_wait():
+        nonlocal iterations
+        while True:
+            await asyncio.sleep(0.001)
+            iterations += 1
+            if iterations <= 2:
+                pm._fresh_measurement_event.set()
+            else:
+                # Stop feeding events — watchdog will time out.
+                return
+
+    feeder = asyncio.create_task(set_event_twice_then_wait())
+    with patch("astrameter.powermeter.homewizard.WATCHDOG_TIMEOUT_SECONDS", 0.05):
+        await pm._measurement_watchdog(ws)
+
+    feeder.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await feeder
+
+    assert iterations >= 3
+    ws.close.assert_called_once()
 
 
 async def test_ws_loop_reconnects_on_client_error():
