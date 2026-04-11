@@ -528,11 +528,19 @@ function renderRow(key, value) {
 }
 
 /* ===== Actions ===== */
+function getCurrentSectionNames() {
+  return Array.from(
+    document.querySelectorAll('.section-name-input'),
+    input => input.value.trim()
+  ).filter(Boolean);
+}
+
 function addSection() {
   const sectionName = 'NEW_SECTION';
   let name = sectionName;
   let i = 1;
-  while (sectionOrder.includes(name)) { name = sectionName + '_' + (i++); }
+  const existingNames = new Set(getCurrentSectionNames());
+  while (existingNames.has(name)) { name = sectionName + '_' + (i++); }
   sectionOrder.push(name);
   currentConfig[name] = {};
   const container = document.getElementById('config-container');
@@ -557,7 +565,7 @@ function removeRow(btn) {
 
 function removeSection(btn) {
   const card = btn.closest('.section-card');
-  const name = card.dataset.section;
+  const name = card.querySelector('.section-name-input').value.trim() || card.dataset.section;
   if (!confirm('Remove section [' + name + '] and all its keys?')) return;
   card.remove();
   sectionOrder = sectionOrder.filter(s => s !== name);
@@ -821,6 +829,26 @@ def _atomic_write_lines(config_path: str, lines: list) -> None:
                 os.unlink(tmp_path)
 
 
+def _validate_config_payload(sections: dict, order: list) -> None:
+    """Raise ValueError if any section name, key, or value would corrupt the INI."""
+    if not isinstance(order, list) or any(not isinstance(s, str) for s in order):
+        raise ValueError("'order' must be a list of section names")
+    for section, pairs in sections.items():
+        if (
+            not isinstance(section, str)
+            or not section
+            or any(ch in section for ch in "\r\n]")
+        ):
+            raise ValueError(f"Invalid section name: {section!r}")
+        if not isinstance(pairs, dict):
+            raise ValueError(f"Section {section!r} must map to an object")
+        for key, value in pairs.items():
+            if not isinstance(key, str) or not key or any(ch in key for ch in "\r\n"):
+                raise ValueError(f"Invalid key in section {section!r}: {key!r}")
+            if not isinstance(value, str) or any(ch in value for ch in "\r\n"):
+                raise ValueError(f"Invalid value for {section!r}.{key!r}")
+
+
 def write_config_from_dict(config_path: str, sections: dict, order: list) -> None:
     """
     Write config.ini from the provided sections dict, preserving existing comments.
@@ -834,6 +862,7 @@ def write_config_from_dict(config_path: str, sections: dict, order: list) -> Non
     ``sections`` maps section names to dicts of key->value.
     ``order`` controls the section order; sections not listed are appended last.
     """
+    _validate_config_payload(sections, order)
     write_order = list(order) + [s for s in sections if s not in order]
 
     if not os.path.exists(config_path):

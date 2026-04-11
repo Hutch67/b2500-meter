@@ -159,8 +159,14 @@ class HealthCheckService:
             )
         try:
             data = await request.json()
+            if not isinstance(data, dict):
+                raise ValueError("JSON body must be an object")
             sections = data.get("sections", {})
+            if not isinstance(sections, dict):
+                raise ValueError("'sections' must be an object")
             order = data.get("order", list(sections.keys()))
+            if not isinstance(order, list):
+                raise ValueError("'order' must be a list")
             write_config_from_dict(self.config_path, sections, order)
             logger.info("Configuration updated via web UI")
             return web.Response(
