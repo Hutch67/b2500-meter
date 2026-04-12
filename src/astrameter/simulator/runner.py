@@ -26,11 +26,13 @@ class BatteryConfig:
     initial_soc: float = 0.5
     ramp_rate: float = 200.0
     poll_interval: float = 1.0
+    power_update_delay_ticks: int = 0
 
 
 @dataclass
 class SimulationConfig:
     batteries: list[BatteryConfig]
+    power_update_delay_ticks: int = 0
     ct_mac: str = "112233445566"
     ct_host: str = "127.0.0.1"
     ct_port: int = 12345
@@ -91,6 +93,7 @@ class SimulationRunner:
                 ramp_rate=bc.ramp_rate,
                 poll_interval=bc.poll_interval,
                 time_scale=cfg.time_scale,
+                power_update_delay_ticks=bc.power_update_delay_ticks,
             )
             for bc in cfg.batteries
         ]
@@ -156,8 +159,11 @@ def parse_config(data: dict) -> SimulationConfig:
     for ld in pm.get("loads", []):
         loads.append(Load(name=ld["name"], power=ld["power"], phase=ld["phase"]))
 
+    default_delay = int(data.get("power_update_delay_ticks", 0))
+
     batteries: list[BatteryConfig] = []
     for bd in data.get("batteries", []):
+        delay = bd.get("power_update_delay_ticks", default_delay)
         bc = BatteryConfig(
             mac=bd["mac"],
             phase=bd["phase"],
@@ -167,6 +173,7 @@ def parse_config(data: dict) -> SimulationConfig:
             initial_soc=bd.get("initial_soc", 0.5),
             ramp_rate=bd.get("ramp_rate", 200.0),
             poll_interval=bd.get("poll_interval", 1.0),
+            power_update_delay_ticks=int(delay),
         )
         batteries.append(bc)
 
@@ -174,6 +181,7 @@ def parse_config(data: dict) -> SimulationConfig:
 
     return SimulationConfig(
         batteries=batteries,
+        power_update_delay_ticks=default_delay,
         ct_mac=ct.get("mac", "112233445566"),
         ct_host=ct.get("host", "127.0.0.1"),
         ct_port=ct.get("port", 12345),
@@ -203,6 +211,11 @@ def validate_config(cfg: SimulationConfig) -> None:
             )
         if bc.max_charge_power < 0 or bc.max_discharge_power < 0:
             raise ValueError(f"Battery {bc.mac}: power values must be >= 0")
+        if bc.power_update_delay_ticks < 0:
+            raise ValueError(
+                f"Battery {bc.mac}: power_update_delay_ticks must be >= 0, "
+                f"got {bc.power_update_delay_ticks}"
+            )
         mac = bc.mac.upper()
         if len(mac) != 12 or not all(c in "0123456789ABCDEF" for c in mac):
             raise ValueError(f"Battery MAC must be 12 hex chars, got {bc.mac!r}")
@@ -230,6 +243,7 @@ def quick_config(
     ct_host: str = "127.0.0.1",
     ct_port: int = 12345,
     http_port: int = 8080,
+    power_update_delay_ticks: int = 0,
 ) -> SimulationConfig:
     """Build a SimulationConfig for quick-start CLI mode."""
     phases = ["A", "B", "C"][:num_phases]
@@ -237,7 +251,14 @@ def quick_config(
     for i in range(num_batteries):
         mac = f"02B250{i + 1:06X}"
         phase = phases[i % len(phases)]
-        batteries.append(BatteryConfig(mac=mac, phase=phase, initial_soc=initial_soc))
+        batteries.append(
+            BatteryConfig(
+                mac=mac,
+                phase=phase,
+                initial_soc=initial_soc,
+                power_update_delay_ticks=power_update_delay_ticks,
+            )
+        )
 
     default_loads = [
         Load("LED lights", 30, "A"),
@@ -252,6 +273,7 @@ def quick_config(
 
     return SimulationConfig(
         batteries=batteries,
+        power_update_delay_ticks=power_update_delay_ticks,
         ct_host=ct_host,
         ct_port=ct_port,
         http_port=http_port,

@@ -54,6 +54,15 @@ def _http_post(port: int, path: str, body: dict | None = None) -> dict:
 # -- subcommands -----------------------------------------------------------
 
 
+def _apply_power_update_delay_override(cfg, ticks: int | None) -> None:
+    """If *ticks* is set, apply the same delay to every battery."""
+    if ticks is None:
+        return
+    cfg.power_update_delay_ticks = ticks
+    for bc in cfg.batteries:
+        bc.power_update_delay_ticks = ticks
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     from .runner import (
         SimulationRunner,
@@ -87,6 +96,7 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     if args.time_scale != 1.0:
         cfg.time_scale = args.time_scale
+    _apply_power_update_delay_override(cfg, args.power_update_delay)
     validate_config(cfg)
     runner = SimulationRunner(cfg)
 
@@ -135,6 +145,7 @@ def cmd_start(args: argparse.Namespace) -> None:
         cfg.http_port = args.http_port
     if args.ct_port:
         cfg.ct_port = args.ct_port
+    _apply_power_update_delay_override(cfg, args.power_update_delay)
     validate_config(cfg)
     runner = SimulationRunner(cfg)
     asyncio.run(runner.run_headless())
@@ -334,6 +345,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="Speed up simulation time (e.g. 10 = 10x faster)",
     )
+    p_run.add_argument(
+        "--power-update-delay",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Delay CT-derived power targets by N simulator ticks (0 = immediate)",
+    )
     p_run.add_argument("-v", "--verbose", action="store_true")
 
     # -- start (daemon) ----------------------------------------------------
@@ -341,6 +359,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_start.add_argument("-c", "--config", help="JSON config file")
     p_start.add_argument("--http-port", type=int)
     p_start.add_argument("--ct-port", type=int)
+    p_start.add_argument(
+        "--power-update-delay",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Delay CT-derived power targets by N simulator ticks (0 = immediate)",
+    )
 
     # -- stop --------------------------------------------------------------
     p_stop = sub.add_parser("stop", help="Stop running daemon")
@@ -418,6 +443,7 @@ def main() -> None:
         args.http_port = None
         args.no_tui = False
         args.time_scale = 1.0
+        args.power_update_delay = None
         args.verbose = False
         cmd = "run"
 

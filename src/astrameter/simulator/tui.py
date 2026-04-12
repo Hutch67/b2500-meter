@@ -231,23 +231,41 @@ class SimulatorApp(App):
     def _format_batteries(self, batteries: list[dict]) -> str:
         if not batteries:
             return "  (none)"
-        lines = [
-            f"  {'':2s}{'MAC':14s} {'Phase':>6s} {'Power':>8s} "
-            f"{'Target':>8s} {'SOC':>6s}  {'':10s}"
-        ]
+        show_applied = any(b.get("power_update_delay_ticks", 0) > 0 for b in batteries)
+        if show_applied:
+            lines = [
+                f"  {'':2s}{'MAC':14s} {'Ph':>4s} {'Power':>7s} "
+                f"{'Req':>7s} {'Appl':>7s} {'SOC':>6s}  {'':6s}"
+            ]
+        else:
+            lines = [
+                f"  {'':2s}{'MAC':14s} {'Phase':>6s} {'Power':>8s} "
+                f"{'Target':>8s} {'SOC':>6s}  {'':10s}"
+            ]
         for i, b in enumerate(batteries):
             sel = "▸ " if i == self._selected_battery else "  "
             soc = b.get("soc", 0)
             bar_len = 8
             filled = int(soc * bar_len)
             bar = "█" * filled + "░" * (bar_len - filled)
-            lines.append(
-                f"  {sel}{b.get('mac', '?'):14s} "
-                f"{b.get('phase', '?'):>6s} "
-                f"{b.get('power', 0):>7.0f}W "
-                f"{b.get('target', 0):>7.0f}W "
-                f"{soc * 100:>5.0f}%  {bar}"
-            )
+            if show_applied:
+                appl = b.get("applied_target", b.get("target", 0))
+                lines.append(
+                    f"  {sel}{b.get('mac', '?'):14s} "
+                    f"{b.get('phase', '?'):>4s} "
+                    f"{b.get('power', 0):>6.0f}W "
+                    f"{b.get('target', 0):>6.0f}W "
+                    f"{appl:>6.0f}W "
+                    f"{soc * 100:>5.0f}%  {bar}"
+                )
+            else:
+                lines.append(
+                    f"  {sel}{b.get('mac', '?'):14s} "
+                    f"{b.get('phase', '?'):>6s} "
+                    f"{b.get('power', 0):>7.0f}W "
+                    f"{b.get('target', 0):>7.0f}W "
+                    f"{soc * 100:>5.0f}%  {bar}"
+                )
         return "\n".join(lines)
 
     def _format_loads(self, loads: list[dict]) -> str:

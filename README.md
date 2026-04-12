@@ -1021,12 +1021,15 @@ Example `sim_config.json`:
     "solar_max": 2000,
     "solar_phases": ["A"]
   },
+  "power_update_delay_ticks": 0,
   "batteries": [
     {"mac": "02B250000001", "phase": "A", "capacity_wh": 2560, "initial_soc": 0.5},
     {"mac": "02B250000002", "phase": "B", "capacity_wh": 2560, "initial_soc": 0.8}
   ]
 }
 ```
+
+Optional top-level `power_update_delay_ticks` (or per-battery `power_update_delay_ticks`) delays how many simulator ticks pass before the battery applies each new CT-derived power setpoint (`reported_power + grid_reading` from the response; `0` = immediate). The same delay can be set from the CLI with `astra-sim run --power-update-delay N` (also supported on `astra-sim start`). With a non-zero delay, `GET /status` and the TUI expose **`target`** as the latest CT-requested watts and **`applied_target`** as the setpoint the battery is ramping toward after the delay. When delay is `0`, both match.
 
 A more complete example simulating a European 3-phase household with rooftop solar,
 multiple appliances, and 4 batteries (two on the heaviest phase):
@@ -1112,7 +1115,7 @@ This configuration demonstrates:
 
 ### Interactive Controls
 
-When running with the TUI (`astra-sim run`, without `--no-tui`), you can interact with the simulation using keyboard shortcuts displayed on screen. The TUI shows live battery state (power, SOC, targets), grid readings per phase, and active loads.
+When running with the TUI (`astra-sim run`, without `--no-tui`), you can interact with the simulation using keyboard shortcuts displayed on screen. The TUI shows live battery state (power, SOC, targets), grid readings per phase, and active loads. If `power_update_delay_ticks` is non-zero, the battery table adds **Req** (CT request) and **Appl** (delayed setpoint) columns so you can see the latency effect; otherwise a single **Target** column shows the setpoint.
 
 Without the TUI, you can control the simulation via the HTTP API:
 

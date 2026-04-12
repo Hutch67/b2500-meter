@@ -37,6 +37,7 @@ class BatterySimulator:
         startup_delay: float = 2.0,
         inspection_count: int = 1,
         time_scale: float = 1.0,
+        power_update_delay_ticks: int = 0,
     ) -> None:
         if phase not in protocol.PHASE_FIELD_INDEX:
             raise ValueError(
@@ -60,13 +61,17 @@ class BatterySimulator:
         self.startup_delay = max(0.0, startup_delay)
         self.inspection_count = inspection_count
         self.time_scale = max(0.1, time_scale)
+        self.power_update_delay_ticks = max(0, int(power_update_delay_ticks))
 
         self._current_power: float = 0.0
         self._soc: float = max(0.0, min(1.0, initial_soc))
         self._target_power: float = 0.0
+        self._requested_target: float = 0.0
         self._request_count: int = 0
         self._last_update: float = time.monotonic()
         self._startup_elapsed: float = 0.0
+        self._step_index: int = 0
+        self._pending_power_targets: list[tuple[int, float]] = []
 
     # -- public read-only properties ---------------------------------------
 
@@ -89,6 +94,26 @@ class BatterySimulator:
     @property
     def target_power(self) -> float:
         return self._target_power
+
+    def _apply_ct_derived_target(self, new_target: float) -> None:
+        """Record CT request immediately; apply to physics after *power_update_delay_ticks*."""
+        self._requested_target = new_target
+        if self.power_update_delay_ticks <= 0:
+            self._target_power = new_target
+            return
+        apply_at = self._step_index + self.power_update_delay_ticks
+        self._pending_power_targets.append((apply_at, new_target))
+
+    def _drain_pending_power_targets(self) -> None:
+        if self.power_update_delay_ticks <= 0:
+            return
+        remaining: list[tuple[int, float]] = []
+        for apply_at, target in self._pending_power_targets:
+            if apply_at <= self._step_index:
+                self._target_power = target
+            else:
+                remaining.append((apply_at, target))
+        self._pending_power_targets = remaining
 
     # -- physics -----------------------------------------------------------
 
@@ -190,7 +215,7 @@ class BatterySimulator:
                 phase_b = int(response_fields[5]) if len(response_fields) > 5 else 0
                 phase_c = int(response_fields[6]) if len(response_fields) > 6 else 0
                 grid_reading = phase_a + phase_b + phase_c
-                self._target_power = self._current_power + grid_reading
+                self._apply_ct_derived_target(self._current_power + grid_reading)
             except (ValueError, TypeError):
                 pass
 
@@ -208,6 +233,8 @@ class BatterySimulator:
         """
         if dt is None:
             dt = self.poll_interval
+        self._step_index += 1
+        self._drain_pending_power_targets()
         self._update_power(dt)
         self._update_soc(dt)
         return await self._send_request()
@@ -239,7 +266,9 @@ class BatterySimulator:
             "mac": self.mac,
             "phase": self.phase,
             "power": round(self._current_power),
-            "target": round(self._target_power),
+            "target": round(self._requested_target),
+            "applied_target": round(self._target_power),
+            "power_update_delay_ticks": self.power_update_delay_ticks,
             "soc": round(self._soc, 4),
             "max_charge": self.max_charge_power,
             "max_discharge": self.max_discharge_power,
