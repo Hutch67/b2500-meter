@@ -132,6 +132,8 @@ def _validate_config_payload(sections: dict, order: list) -> None:
     """Raise ValueError if any section name, key, or value would corrupt the INI."""
     if not isinstance(order, list) or any(not isinstance(s, str) for s in order):
         raise ValueError("'order' must be a list of section names")
+    if len(order) != len(set(order)):
+        raise ValueError("'order' contains duplicate section names")
     for section, pairs in sections.items():
         if (
             not isinstance(section, str)
@@ -164,37 +166,39 @@ def write_config_from_dict(config_path: str, sections: dict, order: list) -> Non
     _validate_config_payload(sections, order)
     write_order = list(order) + [s for s in sections if s not in order]
 
-    updater = ConfigUpdater()
-    updater.optionxform = str  # type: ignore[assignment]  # preserve key case
-
-    if os.path.exists(config_path):
-        updater.read(config_path)
-
-    # Update existing sections and add new keys / remove stale keys.
-    for section_name, new_pairs in sections.items():
-        if updater.has_section(section_name):
-            for key in set(updater.options(section_name)) - new_pairs.keys():
-                updater.remove_option(section_name, key)
-        else:
-            updater.add_section(section_name)
-        for key, value in new_pairs.items():
-            updater.set(section_name, key, value)
-
-    # Remove sections not present in the incoming payload.
-    for section_name in list(updater.sections()):
-        if section_name not in sections:
-            updater.remove_section(section_name)
-
-    # Re-order sections to match *write_order* by rebuilding from
-    # detached copies.  Only needed when the order actually differs.
-    current_order = updater.sections()
-    desired = [s for s in write_order if s in sections]
-    if current_order != desired:
-        detached = {name: updater[name].detach() for name in list(updater.sections())}
-        for name in desired:
-            updater.add_section(detached[name])
-
     with _CONFIG_WRITE_LOCK:
+        updater = ConfigUpdater()
+        updater.optionxform = str  # type: ignore[assignment]  # preserve key case
+
+        if os.path.exists(config_path):
+            updater.read(config_path)
+
+        # Update existing sections and add new keys / remove stale keys.
+        for section_name, new_pairs in sections.items():
+            if updater.has_section(section_name):
+                for key in set(updater.options(section_name)) - new_pairs.keys():
+                    updater.remove_option(section_name, key)
+            else:
+                updater.add_section(section_name)
+            for key, value in new_pairs.items():
+                updater.set(section_name, key, value)
+
+        # Remove sections not present in the incoming payload.
+        for section_name in list(updater.sections()):
+            if section_name not in sections:
+                updater.remove_section(section_name)
+
+        # Re-order sections to match *write_order* by rebuilding from
+        # detached copies.  Only needed when the order actually differs.
+        current_order = updater.sections()
+        desired = [s for s in write_order if s in sections]
+        if current_order != desired:
+            detached = {
+                name: updater[name].detach() for name in list(updater.sections())
+            }
+            for name in desired:
+                updater.add_section(detached[name])
+
         _atomic_write_lines(config_path, [str(updater)])
 
 

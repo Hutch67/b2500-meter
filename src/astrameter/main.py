@@ -390,6 +390,65 @@ async def async_main(
                 logger.exception("Error stopping health check service")
 
 
+def _resolve_device_config(
+    cfg: configparser.ConfigParser, args: argparse.Namespace
+) -> tuple[list[str], list[str], bool]:
+    """Derive device_types, device_ids and skip_test from *cfg* and CLI *args*."""
+    device_types = (
+        args.device_types
+        if args.device_types is not None
+        else [
+            dt.strip()
+            for dt in cfg.get("GENERAL", "DEVICE_TYPE", fallback="shellypro3em").split(
+                ","
+            )
+            if dt.strip()
+        ]
+    )
+    skip_test = (
+        args.skip_powermeter_test
+        if args.skip_powermeter_test is not None
+        else cfg.getboolean("GENERAL", "SKIP_POWERMETER_TEST", fallback=False)
+    )
+
+    device_ids: list[str] = list(args.device_ids) if args.device_ids is not None else []
+    if not device_ids:
+        cfg_device_ids = cfg.get("GENERAL", "DEVICE_IDS", fallback="").strip()
+        if cfg_device_ids:
+            device_ids = [
+                did.strip() for did in cfg_device_ids.split(",") if did.strip()
+            ]
+    while len(device_ids) < len(device_types):
+        device_type = device_types[len(device_ids)]
+        if device_type in ["shellypro3em", "shellyemg3", "shellyproem50"]:
+            device_ids.append(f"{device_type}-ec4609c439c{len(device_ids) + 1}")
+        else:
+            device_ids.append(f"device-{len(device_ids) + 1}")
+
+    if "shellypro3em" in device_types:
+        shellypro3em_index = device_types.index("shellypro3em")
+        device_types[shellypro3em_index] = "shellypro3em_old"
+        device_types.append("shellypro3em_new")
+        device_ids.append(device_ids[shellypro3em_index])
+
+    ct_ports = []
+    for device_type in device_types:
+        if device_type in ["ct002", "ct003"]:
+            section = get_ct_section(device_type, cfg)
+            ct_ports.append(cfg.getint(section, "UDP_PORT", fallback=UDP_PORT))
+    if len(ct_ports) != len(set(ct_ports)):
+        raise ValueError(
+            "Multiple CT002/CT003 devices are configured with the same UDP port. "
+            "Set UDP_PORT in [CT002]/[CT003] to avoid conflicts."
+        )
+
+    logger.info(f"Device Types: {device_types}")
+    logger.info(f"Device IDs: {device_ids}")
+    logger.info(f"Skip Test: {skip_test}")
+
+    return device_types, device_ids, skip_test
+
+
 def main():
     parser = argparse.ArgumentParser(description="Power meter device emulator")
     parser.add_argument(
@@ -444,61 +503,7 @@ def main():
             "Git commit not logged (set GIT_COMMIT_SHA at image build for CI images)"
         )
 
-    # Load general settings
-    device_types = (
-        args.device_types
-        if args.device_types is not None
-        else [
-            dt.strip()
-            for dt in cfg.get("GENERAL", "DEVICE_TYPE", fallback="shellypro3em").split(
-                ","
-            )
-            if dt.strip()
-        ]
-    )
-    skip_test = (
-        args.skip_powermeter_test
-        if args.skip_powermeter_test is not None
-        else cfg.getboolean("GENERAL", "SKIP_POWERMETER_TEST", fallback=False)
-    )
-
-    device_ids = args.device_ids if args.device_ids is not None else []
-    # Load device IDs from config if not provided via CLI
-    if not device_ids:
-        cfg_device_ids = cfg.get("GENERAL", "DEVICE_IDS", fallback="").strip()
-        if cfg_device_ids:
-            device_ids = [
-                did.strip() for did in cfg_device_ids.split(",") if did.strip()
-            ]
-    # Fill missing device IDs with default format
-    while len(device_ids) < len(device_types):
-        device_type = device_types[len(device_ids)]
-        if device_type in ["shellypro3em", "shellyemg3", "shellyproem50"]:
-            device_ids.append(f"{device_type}-ec4609c439c{len(device_ids) + 1}")
-        else:
-            device_ids.append(f"device-{len(device_ids) + 1}")
-
-    # For backward compatibility, replace shellypro3em with shellypro3em_old and shellypro3em_new
-    if "shellypro3em" in device_types:
-        shellypro3em_index = device_types.index("shellypro3em")
-        device_types[shellypro3em_index] = "shellypro3em_old"
-        device_types.append("shellypro3em_new")
-        device_ids.append(device_ids[shellypro3em_index])
-
-    ct_ports = []
-    for device_type in device_types:
-        if device_type in ["ct002", "ct003"]:
-            section = get_ct_section(device_type, cfg)
-            ct_ports.append(cfg.getint(section, "UDP_PORT", fallback=UDP_PORT))
-    if len(ct_ports) != len(set(ct_ports)):
-        raise ValueError(
-            "Multiple CT002/CT003 devices are configured with the same UDP port. "
-            "Set UDP_PORT in [CT002]/[CT003] to avoid conflicts."
-        )
-
-    logger.info(f"Device Types: {device_types}")
-    logger.info(f"Device IDs: {device_ids}")
-    logger.info(f"Skip Test: {skip_test}")
+    device_types, device_ids, skip_test = _resolve_device_config(cfg, args)
 
     # Apply command line throttling override if specified
     if args.throttle_interval is not None:
@@ -586,6 +591,7 @@ def main():
             logger.info("Restarting service…")
             cfg = configparser.ConfigParser(dict_type=OrderedDict, interpolation=None)
             cfg.read(args.config)
+            device_types, device_ids, skip_test = _resolve_device_config(cfg, args)
         except RuntimeError as exc:
             logger.error("%s", exc)
             exit(1)

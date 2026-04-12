@@ -82,6 +82,11 @@ def test_validate_value_with_newline():
         _validate_config_payload({"S": {"k": "a\nb"}}, ["S"])
 
 
+def test_validate_duplicate_order():
+    with pytest.raises(ValueError, match="duplicate section names"):
+        _validate_config_payload({"S": {"k": "v"}}, ["S", "S"])
+
+
 # ---------- write_config_from_dict — new file ----------
 
 

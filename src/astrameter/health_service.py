@@ -189,7 +189,7 @@ class HealthCheckService:
             )
 
     async def _handle_api_restart(self, request):
-        """Acknowledge POST /api/restart and schedule a graceful shutdown via SIGTERM."""
+        """Acknowledge POST /api/restart and schedule an in-process restart via SIGUSR1."""
         import signal
 
         response = web.Response(
@@ -199,10 +199,10 @@ class HealthCheckService:
             content_type="application/json",
         )
         logger.info("Restart requested via web UI")
-        # Send SIGTERM to ourselves so the asyncio main loop handles graceful
-        # shutdown (finally blocks, powermeter/MQTT cleanup) before the
-        # external supervisor (Docker, systemd, HA addon) restarts the process.
-        threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
+        # Send SIGUSR1 so the handler in main.py sets restart_requested=True
+        # before raising KeyboardInterrupt, causing the outer loop to reload
+        # the config and re-run instead of exiting.
+        threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGUSR1)).start()
         return response
 
     async def _handle_not_found(self, request):
