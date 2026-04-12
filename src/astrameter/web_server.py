@@ -160,7 +160,10 @@ class WebServer:
 
     async def _handle_api_config_post(self, request):
         """Write updated config sections from the JSON body at POST /api/config."""
-        from astrameter.web_config import write_config_from_dict
+        import shutil
+        import tempfile
+
+        from astrameter.web_config import validate_config, write_config_from_dict
 
         if not self.config_path:
             return web.Response(
@@ -178,6 +181,21 @@ class WebServer:
             order = data.get("order", list(sections.keys()))
             if not isinstance(order, list):
                 raise ValueError("'order' must be a list")
+            # Write to a temp copy and validate before touching the live file.
+            dir_name = os.path.dirname(self.config_path) or "."
+            with tempfile.NamedTemporaryFile(
+                "w", dir=dir_name, suffix=".tmp", delete=False
+            ) as tmp:
+                tmp_path = tmp.name
+            try:
+                if os.path.exists(self.config_path):
+                    shutil.copyfile(self.config_path, tmp_path)
+                write_config_from_dict(tmp_path, sections, order)
+                validate_config(tmp_path)
+            except Exception:
+                os.unlink(tmp_path)
+                raise
+            os.unlink(tmp_path)
             write_config_from_dict(self.config_path, sections, order)
             logger.info("Configuration updated via web UI")
             return web.Response(
@@ -187,7 +205,7 @@ class WebServer:
         except (ValueError, json.JSONDecodeError) as e:
             logger.error("Invalid config request: %s", e)
             return web.Response(
-                body=json.dumps({"error": "Invalid request"}).encode(),
+                body=json.dumps({"error": str(e)}).encode(),
                 status=400,
                 content_type="application/json",
             )

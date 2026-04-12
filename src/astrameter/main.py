@@ -391,6 +391,16 @@ async def async_main(
                 logger.exception("Error stopping web server")
 
 
+def _apply_cli_overrides(
+    cfg: configparser.ConfigParser, args: argparse.Namespace
+) -> None:
+    """Re-apply CLI flags that override config-file values."""
+    if args.throttle_interval is not None:
+        if not cfg.has_section("GENERAL"):
+            cfg.add_section("GENERAL")
+        cfg.set("GENERAL", "THROTTLE_INTERVAL", str(args.throttle_interval))
+
+
 def _resolve_device_config(
     cfg: configparser.ConfigParser, args: argparse.Namespace
 ) -> tuple[list[str], list[str], bool]:
@@ -506,11 +516,7 @@ def main():
 
     device_types, device_ids, skip_test = _resolve_device_config(cfg, args)
 
-    # Apply command line throttling override if specified
-    if args.throttle_interval is not None:
-        if not cfg.has_section("GENERAL"):
-            cfg.add_section("GENERAL")
-        cfg.set("GENERAL", "THROTTLE_INTERVAL", str(args.throttle_interval))
+    _apply_cli_overrides(cfg, args)
 
     # Optional Marstek cloud registration for managed fake CT devices (sync, before event loop)
     marstek_enabled = cfg.getboolean("MARSTEK", "ENABLE", fallback=False)
@@ -592,6 +598,7 @@ def main():
             logger.info("Restarting service…")
             cfg = configparser.ConfigParser(dict_type=OrderedDict, interpolation=None)
             cfg.read(args.config)
+            _apply_cli_overrides(cfg, args)
             device_types, device_ids, skip_test = _resolve_device_config(cfg, args)
         except RuntimeError as exc:
             logger.error("%s", exc)
