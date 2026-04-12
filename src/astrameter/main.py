@@ -563,13 +563,32 @@ def main():
     # runs finally-cleanup the same way it does for SIGINT (Ctrl+C).
     signal.signal(signal.SIGTERM, signal.default_int_handler)
 
-    try:
-        asyncio.run(async_main(cfg, args, device_types, device_ids, skip_test))
-    except KeyboardInterrupt:
-        pass
-    except RuntimeError as exc:
-        logger.error("%s", exc)
-        exit(1)
+    # SIGUSR1 is used by the web UI restart button.  We set a flag *before*
+    # raising KeyboardInterrupt so the outer loop knows to re-run instead of
+    # exiting.
+    restart_requested = False
+
+    def _restart_handler(signum, frame):
+        nonlocal restart_requested
+        restart_requested = True
+        signal.default_int_handler(signum, frame)
+
+    signal.signal(signal.SIGUSR1, _restart_handler)
+
+    while True:
+        restart_requested = False
+        try:
+            asyncio.run(async_main(cfg, args, device_types, device_ids, skip_test))
+            break  # clean exit
+        except KeyboardInterrupt:
+            if not restart_requested:
+                break
+            logger.info("Restarting service…")
+            cfg = configparser.ConfigParser(dict_type=OrderedDict, interpolation=None)
+            cfg.read(args.config)
+        except RuntimeError as exc:
+            logger.error("%s", exc)
+            exit(1)
 
 
 # end main
