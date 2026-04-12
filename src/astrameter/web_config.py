@@ -15,6 +15,8 @@ import tempfile
 import threading
 from collections import OrderedDict
 
+from configupdater import ConfigUpdater
+
 
 def _load_config_editor_html() -> str:
     """Load the config editor HTML from the bundled static file."""
@@ -162,102 +164,38 @@ def write_config_from_dict(config_path: str, sections: dict, order: list) -> Non
     _validate_config_payload(sections, order)
     write_order = list(order) + [s for s in sections if s not in order]
 
-    if not os.path.exists(config_path):
-        lines: list = []
-        for section in write_order:
-            if section not in sections:
-                continue
-            lines.append(f"[{section}]\n")
-            for key, value in sections[section].items():
-                lines.append(f"{key} = {value}\n")
-            lines.append("\n")
-        with _CONFIG_WRITE_LOCK:
-            _atomic_write_lines(config_path, lines)
-        return
+    updater = ConfigUpdater()
+    updater.optionxform = str  # type: ignore[assignment]  # preserve key case
 
-    with open(config_path) as f:
-        original_lines = f.readlines()
+    if os.path.exists(config_path):
+        updater.read(config_path)
 
-    # Split the original file into a preamble (lines before the first section
-    # header) and a list of [section_name, raw_lines] pairs.
-    pre_lines: list = []
-    parsed_sections: list = []  # list of [name, [raw lines including header]]
-    cur_name = None
-    cur_lines: list = []
-
-    for line in original_lines:
-        stripped = line.strip()
-        if stripped.startswith("[") and "]" in stripped:
-            name = stripped[1 : stripped.index("]")]
-            if cur_name is not None:
-                parsed_sections.append([cur_name, cur_lines])
-            else:
-                pre_lines = cur_lines
-            cur_name = name
-            cur_lines = [line]
+    # Update existing sections and add new keys / remove stale keys.
+    for section_name, new_pairs in sections.items():
+        if updater.has_section(section_name):
+            for key in set(updater.options(section_name)) - new_pairs.keys():
+                updater.remove_option(section_name, key)
         else:
-            cur_lines.append(line)
-    if cur_name is not None:
-        parsed_sections.append([cur_name, cur_lines])
-    elif cur_lines:
-        pre_lines = cur_lines
-
-    orig_section_lines = {name: sec_lines for name, sec_lines in parsed_sections}
-
-    def _update_section(orig_sec_lines: list, new_pairs: dict) -> list:
-        """Return updated raw lines for one section, preserving comments."""
-        result = [orig_sec_lines[0]]  # section header line
-        written: set = set()
-        pending: list = []  # buffered comment/blank lines preceding a key
-
-        for line in orig_sec_lines[1:]:
-            stripped = line.strip()
-            if stripped == "" or stripped.startswith("#") or stripped.startswith(";"):
-                pending.append(line)
-            elif "=" in stripped:
-                key = stripped.split("=", 1)[0].strip()
-                if key in new_pairs:
-                    result.extend(pending)
-                    pending = []
-                    result.append(f"{key} = {new_pairs[key]}\n")
-                    written.add(key)
-                else:
-                    # Key was deleted - discard its associated comments too
-                    pending = []
-            else:
-                result.extend(pending)
-                pending = []
-                result.append(line)
-
-        result.extend(pending)  # trailing blank/comment lines at section end
-
-        # Append brand-new keys not present in the original section
+            updater.add_section(section_name)
         for key, value in new_pairs.items():
-            if key not in written:
-                result.append(f"{key} = {value}\n")
+            updater.set(section_name, key, value)
 
-        return result
+    # Remove sections not present in the incoming payload.
+    for section_name in list(updater.sections()):
+        if section_name not in sections:
+            updater.remove_section(section_name)
 
-    output_lines = list(pre_lines)
-
-    for section in write_order:
-        if section not in sections:
-            continue
-        if section in orig_section_lines:
-            output_lines.extend(
-                _update_section(orig_section_lines[section], sections[section])
-            )
-        else:
-            # Entirely new section
-            if output_lines and output_lines[-1].strip():
-                output_lines.append("\n")
-            output_lines.append(f"[{section}]\n")
-            for key, value in sections[section].items():
-                output_lines.append(f"{key} = {value}\n")
-            output_lines.append("\n")
+    # Re-order sections to match *write_order* by rebuilding from
+    # detached copies.  Only needed when the order actually differs.
+    current_order = updater.sections()
+    desired = [s for s in write_order if s in sections]
+    if current_order != desired:
+        detached = {name: updater[name].detach() for name in list(updater.sections())}
+        for name in desired:
+            updater.add_section(detached[name])
 
     with _CONFIG_WRITE_LOCK:
-        _atomic_write_lines(config_path, output_lines)
+        _atomic_write_lines(config_path, [str(updater)])
 
 
 def validate_config(config_path: str) -> None:
