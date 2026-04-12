@@ -20,6 +20,7 @@ from astrameter.powermeter import (
     JsonHttpPowermeter,
     ModbusPowermeter,
     MqttPowermeter,
+    PidPowermeter,
     Powermeter,
     Script,
     Shelly1PM,
@@ -149,6 +150,11 @@ def read_all_powermeter_configs(
     global_throttle_interval = config.getfloat(
         "GENERAL", "THROTTLE_INTERVAL", fallback=0.0
     )
+    global_pid_kp = config.getfloat("GENERAL", "PID_KP", fallback=0.0)
+    global_pid_ki = config.getfloat("GENERAL", "PID_KI", fallback=0.0)
+    global_pid_kd = config.getfloat("GENERAL", "PID_KD", fallback=0.0)
+    global_pid_output_max = config.getfloat("GENERAL", "PID_OUTPUT_MAX", fallback=800.0)
+    global_pid_mode = config.get("GENERAL", "PID_MODE", fallback="bias").strip().lower()
 
     for section in config.sections():
         powermeter = create_powermeter(section, config)
@@ -189,6 +195,46 @@ def read_all_powermeter_configs(
                     section,
                 )
                 powermeter = ThrottledPowermeter(powermeter, section_throttle_interval)
+
+            section_pid_kp = config.getfloat(section, "PID_KP", fallback=global_pid_kp)
+            if section_pid_kp > 0:
+                pid_source = (
+                    "section-specific"
+                    if config.has_option(section, "PID_KP")
+                    else "global"
+                )
+                section_pid_ki = config.getfloat(
+                    section, "PID_KI", fallback=global_pid_ki
+                )
+                section_pid_kd = config.getfloat(
+                    section, "PID_KD", fallback=global_pid_kd
+                )
+                section_pid_output_max = config.getfloat(
+                    section, "PID_OUTPUT_MAX", fallback=global_pid_output_max
+                )
+                section_pid_mode = (
+                    config.get(section, "PID_MODE", fallback=global_pid_mode)
+                    .strip()
+                    .lower()
+                )
+                logger.info(
+                    "Applying %s PID controller (Kp=%s, Ki=%s, Kd=%s, max=%sW, mode=%s) to %s",
+                    pid_source,
+                    section_pid_kp,
+                    section_pid_ki,
+                    section_pid_kd,
+                    section_pid_output_max,
+                    section_pid_mode,
+                    section,
+                )
+                powermeter = PidPowermeter(
+                    powermeter,
+                    kp=section_pid_kp,
+                    ki=section_pid_ki,
+                    kd=section_pid_kd,
+                    output_max=section_pid_output_max,
+                    mode=section_pid_mode,
+                )
 
             client_filter = create_client_filter(section, config)
             powermeters.append((powermeter, client_filter))

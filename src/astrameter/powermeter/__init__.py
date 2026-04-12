@@ -8,6 +8,7 @@ from .iobroker import IoBroker
 from .json_http import JsonHttpPowermeter
 from .modbus import ModbusPowermeter
 from .mqtt import MqttPowermeter
+from .pid import PidPowermeter
 from .script import Script
 from .shelly import Shelly, Shelly1PM, Shelly3EM, Shelly3EMPro, ShellyEM, ShellyPlus1PM
 from .shrdzm import Shrdzm
@@ -29,6 +30,7 @@ __all__ = [
     "JsonHttpPowermeter",
     "ModbusPowermeter",
     "MqttPowermeter",
+    "PidPowermeter",
     "Powermeter",
     "Script",
     "Shelly",
