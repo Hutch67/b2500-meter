@@ -224,3 +224,147 @@ def config_to_json(config_path: str) -> str:
     """Return the config as a JSON string suitable for the web UI."""
     sections, order = read_config_as_dict(config_path)
     return json.dumps({"sections": sections, "order": order})
+
+
+# -- Key-type metadata served to the config editor --------------------------
+
+_PM_COMMON: dict[str, dict[str, object]] = {
+    "THROTTLE_INTERVAL": {"type": "float"},
+    "POWER_OFFSET": {"type": "float"},
+    "POWER_MULTIPLIER": {"type": "float"},
+    "NETMASK": {},
+}
+
+
+def _pm(**extras: dict[str, object]) -> dict[str, dict[str, object]]:
+    """Merge powermeter-common keys with section-specific extras."""
+    return {**_PM_COMMON, **extras}
+
+
+SECTION_KEY_TYPES: dict[str, dict[str, dict[str, object]]] = {
+    "GENERAL": {
+        "DEVICE_TYPE": {
+            "type": "select",
+            "options": [
+                "ct002",
+                "ct003",
+                "shellypro3em",
+                "shellyemg3",
+                "shellyproem50",
+            ],
+        },
+        "SKIP_POWERMETER_TEST": {"type": "boolean"},
+        "WEB_CONFIG_ENABLED": {"type": "boolean"},
+        "ENABLE_WEB_SERVER": {"type": "boolean"},
+        "WEB_SERVER_PORT": {"type": "integer"},
+        "DISABLE_SUM_PHASES": {"type": "boolean"},
+        "DISABLE_ABSOLUTE_VALUES": {"type": "boolean"},
+        "THROTTLE_INTERVAL": {"type": "float"},
+    },
+    "CT002": {
+        "UDP_PORT": {"type": "integer"},
+        "WIFI_RSSI": {"type": "integer"},
+        "DEDUPE_TIME_WINDOW": {"type": "float"},
+        "CONSUMER_TTL": {"type": "float"},
+        "DEBUG_STATUS": {"type": "boolean"},
+        "ACTIVE_CONTROL": {"type": "boolean"},
+        "SMOOTH_TARGET_ALPHA": {"type": "float", "min": 0, "max": 1},
+        "DEADBAND": {"type": "float"},
+        "MAX_SMOOTH_STEP": {"type": "float"},
+        "FAIR_DISTRIBUTION": {"type": "boolean"},
+        "BALANCE_GAIN": {"type": "float"},
+        "BALANCE_DEADBAND": {"type": "float"},
+        "MAX_CORRECTION_PER_STEP": {"type": "float"},
+        "ERROR_BOOST_THRESHOLD": {"type": "float"},
+        "ERROR_BOOST_MAX": {"type": "float"},
+        "ERROR_REDUCE_THRESHOLD": {"type": "float"},
+        "MAX_TARGET_STEP": {"type": "float"},
+        "SATURATION_DETECTION": {"type": "boolean"},
+        "SATURATION_ALPHA": {"type": "float", "min": 0, "max": 1},
+        "MIN_TARGET_FOR_SATURATION": {"type": "float"},
+        "MIN_EFFICIENT_POWER": {"type": "float"},
+        "EFFICIENCY_ROTATION_INTERVAL": {"type": "float"},
+        "PROBE_MIN_POWER": {"type": "float"},
+        "EFFICIENCY_FADE_ALPHA": {"type": "float", "min": 0, "max": 1},
+        "EFFICIENCY_SATURATION_THRESHOLD": {"type": "float", "min": 0, "max": 1},
+        "SATURATION_DECAY_FACTOR": {"type": "float", "min": 0, "max": 1},
+        "SATURATION_GRACE_SECONDS": {"type": "float"},
+        "SATURATION_STALL_TIMEOUT_SECONDS": {"type": "float"},
+    },
+    "MARSTEK": {
+        "ENABLE": {"type": "boolean"},
+        "PASSWORD": {"type": "password"},
+    },
+    "SHELLY": _pm(
+        TYPE={"type": "select", "options": ["1PM", "PLUS1PM", "EM", "3EM", "3EMPro"]},
+        PASS={"type": "password"},
+    ),
+    "TASMOTA": _pm(
+        PASS={"type": "password"},
+        JSON_POWER_CALCULATE={"type": "boolean"},
+    ),
+    "SHRDZM": _pm(PASS={"type": "password"}),
+    "EMLOG": _pm(
+        METER_INDEX={"type": "integer"},
+        JSON_POWER_CALCULATE={"type": "boolean"},
+    ),
+    "IOBROKER": _pm(
+        PORT={"type": "integer"},
+        POWER_CALCULATE={"type": "boolean"},
+    ),
+    "HOMEASSISTANT": _pm(
+        PORT={"type": "integer"},
+        HTTPS={"type": "boolean"},
+        ACCESSTOKEN={"type": "password"},
+        POWER_CALCULATE={"type": "boolean"},
+    ),
+    "VZLOGGER": _pm(PORT={"type": "integer"}),
+    "ESPHOME": _pm(PORT={"type": "integer"}),
+    "AMIS_READER": _pm(),
+    "MODBUS": _pm(
+        PORT={"type": "integer"},
+        UNIT_ID={"type": "integer"},
+        ADDRESS={"type": "integer"},
+        COUNT={"type": "integer"},
+        DATA_TYPE={
+            "type": "select",
+            "options": ["UINT16", "INT16", "UINT32", "INT32", "FLOAT32", "FLOAT64"],
+        },
+        BYTE_ORDER={"type": "select", "options": ["BIG", "LITTLE"]},
+        WORD_ORDER={"type": "select", "options": ["BIG", "LITTLE"]},
+        REGISTER_TYPE={"type": "select", "options": ["HOLDING", "INPUT"]},
+    ),
+    "MQTT": _pm(
+        PORT={"type": "integer"},
+        TLS={"type": "boolean"},
+        PASSWORD={"type": "password"},
+    ),
+    "JSON_HTTP": _pm(PASSWORD={"type": "password"}),
+    "TQ_EM": _pm(
+        PASSWORD={"type": "password"},
+        TIMEOUT={"type": "float"},
+    ),
+    "HOMEWIZARD": _pm(
+        TOKEN={"type": "password"},
+        VERIFY_SSL={"type": "boolean"},
+    ),
+    "SMA_ENERGY_METER": _pm(
+        PORT={"type": "integer"},
+        SERIAL_NUMBER={"type": "integer"},
+    ),
+    "SCRIPT": _pm(),
+    "SML": _pm(),
+    "MQTT_INSIGHTS": {
+        "PORT": {"type": "integer"},
+        "TLS": {"type": "boolean"},
+        "PASSWORD": {"type": "password"},
+        "HA_DISCOVERY": {"type": "boolean"},
+    },
+}
+# Resolve aliases
+SECTION_KEY_TYPES["CT003"] = SECTION_KEY_TYPES["CT002"]
+
+
+def section_key_types_json() -> str:
+    """Return SECTION_KEY_TYPES as a JSON string for the config editor."""
+    return json.dumps(SECTION_KEY_TYPES)

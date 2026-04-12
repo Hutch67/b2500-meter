@@ -265,9 +265,16 @@ let sectionOrder = [];    // preserve section order
 /* ===== Boot ===== */
 async function loadConfig() {
   try {
-    const resp = await fetch('/api/config');
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const data = await resp.json();
+    const [configResp, keyTypesResp] = await Promise.all([
+      fetch('/api/config'),
+      fetch('/api/key-types'),
+    ]);
+    if (!configResp.ok) throw new Error('config HTTP ' + configResp.status);
+    if (!keyTypesResp.ok) throw new Error('key-types HTTP ' + keyTypesResp.status);
+    const data = await configResp.json();
+    SECTION_KEY_TYPES = await keyTypesResp.json();
+    _sectionPrefixes = Object.keys(SECTION_KEY_TYPES)
+      .sort((a, b) => b.length - a.length);
     currentConfig = data.sections || {};
     sectionOrder = data.order || Object.keys(currentConfig);
     renderAll();
@@ -315,7 +322,7 @@ function renderSection(sectionName, pairs) {
   const tbody = document.createElement('tbody');
   tbody.className = 'key-value-body';
   Object.entries(pairs).forEach(([k, v]) => {
-    tbody.appendChild(renderRow(k, v));
+    tbody.appendChild(renderRow(sectionName, k, v));
   });
   table.appendChild(tbody);
   body.appendChild(table);
@@ -333,48 +340,35 @@ function renderSection(sectionName, pairs) {
   return card;
 }
 
-/* ===== Key-type metadata ===== */
-const KEY_TYPES = {
-  // Booleans
-  SKIP_POWERMETER_TEST:    { type: 'boolean' },
-  WEB_CONFIG_ENABLED:      { type: 'boolean' },
-  ENABLE_HEALTH_CHECK:     { type: 'boolean' },
-  DISABLE_SUM_PHASES:      { type: 'boolean' },
-  DISABLE_ABSOLUTE_VALUES: { type: 'boolean' },
-  HTTPS:                   { type: 'boolean' },
-  POWER_CALCULATE:         { type: 'boolean' },
-  JSON_POWER_CALCULATE:    { type: 'boolean' },
-  // Integers
-  POLL_INTERVAL:           { type: 'integer' },
-  PORT:                    { type: 'integer' },
-  UNIT_ID:                 { type: 'integer' },
-  ADDRESS:                 { type: 'integer' },
-  COUNT:                   { type: 'integer' },
-  // Floats
-  THROTTLE_INTERVAL:       { type: 'float' },
-  EMA_ALPHA:               { type: 'float', min: 0, max: 1 },
-  EMA_INTERVAL:            { type: 'float' },
-  POWER_OFFSET:            { type: 'float' },
-  POWER_MULTIPLIER:        { type: 'float' },
-  SLEW_RATE_WATTS_PER_SEC: { type: 'float' },
-  DEADBAND_WATTS:          { type: 'float' },
-  HOLD_TIME:               { type: 'float' },
-  TIMEOUT:                 { type: 'float' },
-  // Passwords
-  PASS:                    { type: 'password' },
-  PASSWORD:                { type: 'password' },
-  ACCESSTOKEN:             { type: 'password' },
-  // Enums
-  TYPE:                    { type: 'select', options: ['1PM', 'PLUS1PM', 'EM', '3EM', '3EMPro'] },
-  DEVICE_TYPE:             { type: 'select', options: ['ct002', 'ct003', 'shellypro3em', 'shellyemg3', 'shellyproem50'] },
-  DATA_TYPE:               { type: 'select', options: ['UINT16', 'INT16', 'UINT32', 'INT32', 'FLOAT32', 'FLOAT64'] },
-  BYTE_ORDER:              { type: 'select', options: ['BIG', 'LITTLE'] },
-  WORD_ORDER:              { type: 'select', options: ['BIG', 'LITTLE'] },
-  REGISTER_TYPE:           { type: 'select', options: ['HOLDING', 'INPUT'] },
-};
+/* ===== Key-type metadata (fetched from backend) ===== */
+let SECTION_KEY_TYPES = {};
+let _sectionPrefixes = [];
 
-function makeValueInput(key, value) {
-  const info = KEY_TYPES[(key || '').toUpperCase()] || {};
+let _datalistCounter = 0;
+
+function knownKeysForSection(sectionName) {
+  const sec = (sectionName || '').toUpperCase();
+  for (const prefix of _sectionPrefixes) {
+    if (sec.startsWith(prefix)) {
+      return Object.keys(SECTION_KEY_TYPES[prefix]);
+    }
+  }
+  return [];
+}
+
+function resolveKeyType(sectionName, key) {
+  const k = (key || '').toUpperCase();
+  const sec = (sectionName || '').toUpperCase();
+  for (const prefix of _sectionPrefixes) {
+    if (sec.startsWith(prefix)) {
+      return SECTION_KEY_TYPES[prefix][k] || {};
+    }
+  }
+  return {};
+}
+
+function makeValueInput(sectionName, key, value) {
+  const info = resolveKeyType(sectionName, key);
   switch (info.type) {
 
     case 'boolean': {
@@ -472,7 +466,23 @@ function makeValueInput(key, value) {
   }
 }
 
-function renderRow(key, value) {
+function buildKeyDatalist(sectionName, tbody) {
+  const id = 'key-suggest-' + (_datalistCounter++);
+  const dl = document.createElement('datalist');
+  dl.id = id;
+  const usedKeys = new Set(
+    Array.from(tbody ? tbody.querySelectorAll('.key-input') : [], i => i.value.toUpperCase())
+  );
+  for (const k of knownKeysForSection(sectionName)) {
+    if (usedKeys.has(k)) continue;
+    const opt = document.createElement('option');
+    opt.value = k;
+    dl.appendChild(opt);
+  }
+  return dl;
+}
+
+function renderRow(sectionName, key, value) {
   const tr = document.createElement('tr');
 
   const keyTd = document.createElement('td');
@@ -486,7 +496,7 @@ function renderRow(key, value) {
 
   const valTd = document.createElement('td');
   valTd.className = 'val-cell';
-  valTd.appendChild(makeValueInput(key, value));
+  valTd.appendChild(makeValueInput(sectionName, key, value));
 
   const actTd = document.createElement('td');
   actTd.className = 'action-cell';
@@ -501,11 +511,25 @@ function renderRow(key, value) {
   tr.appendChild(valTd);
   tr.appendChild(actTd);
 
-  // When the key name is changed, swap the value element to the right type.
+  const getSectionName = () => {
+    const card = tr.closest('.section-card');
+    const inp = card && card.querySelector('.section-name-input');
+    return inp ? inp.value : sectionName;
+  };
+
+  keyInp.addEventListener('focus', () => {
+    const old = keyTd.querySelector('datalist');
+    if (old) old.remove();
+    const tbody = tr.closest('tbody');
+    const dl = buildKeyDatalist(getSectionName(), tbody);
+    keyTd.appendChild(dl);
+    keyInp.setAttribute('list', dl.id);
+  });
+
   keyInp.addEventListener('change', () => {
     const elem = valTd.querySelector('.val-input');
     const currentVal = elem ? elem.value : '';
-    valTd.replaceChildren(makeValueInput(keyInp.value, currentVal));
+    valTd.replaceChildren(makeValueInput(getSectionName(), keyInp.value, currentVal));
   });
 
   return tr;
@@ -538,8 +562,10 @@ function addSection() {
 
 function addKey(btn) {
   const card = btn.closest('.section-card');
+  const secInput = card.querySelector('.section-name-input');
+  const sectionName = secInput ? secInput.value : '';
   const tbody = card.querySelector('.key-value-body');
-  tbody.appendChild(renderRow('', ''));
+  tbody.appendChild(renderRow(sectionName, '', ''));
   tbody.lastElementChild.querySelector('.key-input').focus();
 }
 

@@ -1,10 +1,9 @@
 """
-Health Check Service for AstraMeter
+Embedded web server for AstraMeter.
 
-Provides HTTP health check endpoints for monitoring service health.
-Compatible with both Home Assistant addon watchdog and Docker health checks.
-
-Also serves a web-based configuration editor at /config when enabled.
+Exposes a health-check endpoint (used by Docker HEALTHCHECK and the
+Home Assistant addon watchdog) and, when enabled, a browser-based
+configuration editor.
 """
 
 import errno
@@ -27,8 +26,8 @@ def _health_json_bytes():
     return json.dumps(payload).encode("utf-8")
 
 
-class HealthCheckService:
-    """Async health check service using aiohttp."""
+class WebServer:
+    """Async HTTP server exposing health, config-editor and API routes."""
 
     def __init__(
         self,
@@ -55,6 +54,8 @@ class HealthCheckService:
             app.router.add_get("/config/", self._handle_config_ui)
             app.router.add_get("/api/config", self._handle_api_config_get)
             app.router.add_get("/api/config/", self._handle_api_config_get)
+            app.router.add_get("/api/key-types", self._handle_api_key_types)
+            app.router.add_get("/api/key-types/", self._handle_api_key_types)
             app.router.add_post("/api/config", self._handle_api_config_post)
             app.router.add_post("/api/config/", self._handle_api_config_post)
             app.router.add_post("/api/restart", self._handle_api_restart)
@@ -70,7 +71,7 @@ class HealthCheckService:
         except OSError as e:
             if e.errno == errno.EADDRINUSE:
                 logger.error(
-                    f"Port {self.port} is already in use. Health check service not started."
+                    f"Port {self.port} is already in use. Web server not started."
                 )
             else:
                 logger.error(f"Failed to bind to {self.bind_address}:{self.port}: {e}")
@@ -78,7 +79,7 @@ class HealthCheckService:
             self._runner = None
             return False
 
-        logger.info(f"Health check service started on {self.bind_address}:{self.port}")
+        logger.info(f"Web server started on {self.bind_address}:{self.port}")
         if self.enable_web_config and self.config_path:
             logger.warning(
                 "Config editor is ENABLED — unauthenticated read/write access is active. "
@@ -94,7 +95,7 @@ class HealthCheckService:
         if self._runner:
             await self._runner.cleanup()
             self._runner = None
-            logger.info("Health check service stopped")
+            logger.info("Web server stopped")
 
     def is_running(self):
         """Return True if the HTTP server is currently running."""
@@ -120,6 +121,16 @@ class HealthCheckService:
             body=CONFIG_EDITOR_HTML.encode("utf-8"),
             content_type="text/html",
             charset="utf-8",
+        )
+
+    async def _handle_api_key_types(self, request):
+        """Return the section key-type metadata as JSON at GET /api/key-types."""
+        from astrameter.web_config import section_key_types_json
+
+        return web.Response(
+            body=section_key_types_json().encode("utf-8"),
+            content_type="application/json",
+            headers={"Cache-Control": "max-age=3600"},
         )
 
     async def _handle_api_config_get(self, request):

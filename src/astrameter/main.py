@@ -12,7 +12,6 @@ from astrameter.config.config_loader import (
 )
 from astrameter.config.logger import logger, setLogLevel
 from astrameter.ct002 import CT002, UDP_PORT
-from astrameter.health_service import HealthCheckService
 from astrameter.marstek_api import (
     MarstekApiError,
     MarstekConfig,
@@ -22,6 +21,7 @@ from astrameter.mqtt_insights import MqttInsightsService
 from astrameter.powermeter import Powermeter
 from astrameter.shelly import Shelly
 from astrameter.version_info import get_git_commit_sha
+from astrameter.web_server import WebServer
 
 # CT002/CT003 phase assignment is auto-managed by emulator runtime.
 
@@ -309,28 +309,29 @@ async def async_main(
     device_ids: list[str],
     skip_test: bool,
 ):
-    # Start health check server
-    health = None
-    if cfg.getboolean("GENERAL", "ENABLE_HEALTH_CHECK", fallback=True):
-        logger.info("Starting health check service...")
+    web_server = None
+    if cfg.getboolean("GENERAL", "ENABLE_WEB_SERVER", fallback=True):
+        logger.info("Starting web server...")
         try:
             enable_web_config = cfg.getboolean(
                 "GENERAL", "WEB_CONFIG_ENABLED", fallback=False
             )
-            health = HealthCheckService(
+            port = cfg.getint("GENERAL", "WEB_SERVER_PORT", fallback=52500)
+            web_server = WebServer(
+                port=port,
                 config_path=args.config,
                 enable_web_config=enable_web_config,
             )
-            if await health.start():
-                logger.info("Health check service started successfully")
+            if await web_server.start():
+                logger.info("Web server started successfully")
             else:
-                logger.error("Failed to start health check service")
-                health = None
+                logger.error("Failed to start web server")
+                web_server = None
         except Exception:
-            logger.exception("Health check service failed to initialize")
-            if health:
-                await health.stop()
-            health = None
+            logger.exception("Web server failed to initialize")
+            if web_server:
+                await web_server.stop()
+            web_server = None
 
     powermeters: list[tuple[Powermeter, ClientFilter]] = []
     insights: MqttInsightsService | None = None
@@ -380,14 +381,14 @@ async def async_main(
                 await pm.stop()
             except Exception:
                 logger.exception("Error stopping powermeter %s", pm)
-        if health:
-            logger.info("Stopping health check service...")
+        if web_server:
+            logger.info("Stopping web server...")
             try:
-                await asyncio.wait_for(health.stop(), timeout=5.0)
+                await asyncio.wait_for(web_server.stop(), timeout=5.0)
             except TimeoutError:
-                logger.warning("Health check service stop timed out")
+                logger.warning("Web server stop timed out")
             except Exception:
-                logger.exception("Error stopping health check service")
+                logger.exception("Error stopping web server")
 
 
 def _resolve_device_config(
